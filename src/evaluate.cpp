@@ -61,6 +61,15 @@ namespace Stockfish {
 
 const Variant* currentNnueVariant;
 
+namespace {
+
+inline bool is_janggi_modern(const Position& pos) {
+    const Variant* v = pos.variant();
+    return v->materialCounting == JANGGI_MATERIAL && v->moveRepetitionIllegal && !v->bikjangRule;
+}
+
+}
+
 namespace Eval {
 
   bool useNNUE;
@@ -1369,7 +1378,7 @@ namespace {
     if (   pos.extinction_value() == VALUE_NONE
         && !pos.captures_to_hand()
         && !pos.connect_n()
-        && !pos.material_counting()
+        && (!pos.material_counting() || is_janggi_modern(pos))
         && !(pos.flag_region(WHITE) || pos.flag_region(BLACK)))
     {
     int outflanking = !pos.count<KING>(WHITE) || !pos.count<KING>(BLACK) ? 0
@@ -1416,7 +1425,7 @@ namespace {
     int sf = me->scale_factor(pos, strongSide);
 
     // If scale factor is not already specific, scale up/down via general heuristics
-    if (sf == SCALE_FACTOR_NORMAL && !pos.captures_to_hand() && !pos.material_counting())
+    if (sf == SCALE_FACTOR_NORMAL && !pos.captures_to_hand() && (!pos.material_counting() || is_janggi_modern(pos)))
     {
         if (pos.opposite_bishops())
         {
@@ -1547,6 +1556,11 @@ namespace {
 make_v:
     // Derive single value from mg and eg parts of score
     Value v = winnable(score);
+
+    // Janggi modern is decisive (material counting resolves adjudication),
+    // so keep a small material-based direction instead of collapsing to 0.
+    if (is_janggi_modern(pos) && std::abs(v) <= PawnValueEg / 2)
+        v += pos.material_counting_result() / 8;
 
     // In case of tracing add all remaining individual evaluation terms
     if constexpr (T)
