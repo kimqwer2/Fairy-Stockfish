@@ -1559,17 +1559,6 @@ make_v:
     // Evaluation grain
     v = (v / 16) * 16;
 
-    // Janggi modern has no practical draw result: keep a tiny material-counting
-    // tiebreak near equality to avoid stable 0.00 drift without distorting eval.
-    if (pos.variant()->janggiModernRule && std::abs(v) <= 80)
-    {
-        Value mc = pos.material_counting_result();
-        if (mc > VALUE_DRAW)
-            v += 8;
-        else if (mc < VALUE_DRAW)
-            v -= 8;
-    }
-
     // Side to move point of view
     v = (pos.side_to_move() == WHITE ? v : -v) + 80 * pos.captures_to_hand();
 
@@ -1655,8 +1644,14 @@ Value Eval::evaluate(const Position& pos) {
       bool pure = !pos.check_counting();
       bool classical = psq * 5 > (750 + pos.non_pawn_material() / 64) * (5 + r50) && !pure;
 
-      v = classical ? Evaluation<NO_TRACE>(pos).value()  // classical
-                    : adjusted_NNUE();                   // NNUE
+      Value classicalV = Evaluation<NO_TRACE>(pos).value();
+      v = classical ? classicalV  // classical
+                    : adjusted_NNUE(); // NNUE
+
+      // janggimodern: NNUE network is typically trained on draw-heavy objectives.
+      // Blend in a small classical component to preserve variant-specific pressure.
+      if (pos.variant()->janggiModernRule && !classical)
+          v = (7 * v + classicalV) / 8;
   }
 
   // Damp down the evaluation linearly when shuffling
@@ -1666,6 +1661,16 @@ Value Eval::evaluate(const Position& pos) {
       v = v * (2 * pos.n_move_rule() - pos.rule50_count()) / (2 * pos.n_move_rule());
       if (pos.material_counting())
           v += pos.material_counting_result() / (10 * std::max(2 * pos.n_move_rule() - pos.rule50_count(), 1));
+  }
+
+  // janggimodern: keep a tiny decisive bias near equality even with NNUE.
+  if (pos.variant()->janggiModernRule && std::abs(v) <= 64)
+  {
+      Value mc = pos.material_counting_result();
+      if (mc > VALUE_DRAW)
+          v += 12;
+      else if (mc < VALUE_DRAW)
+          v -= 12;
   }
 
   // Guarantee evaluation does not hit the virtual win/loss range
