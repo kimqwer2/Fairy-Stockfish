@@ -93,6 +93,16 @@ namespace {
     return VALUE_DRAW + Value(2 * (thisThread->nodes & 1) - 1);
   }
 
+  Value value_janggimodern(const Position& pos) {
+    if (!pos.variant()->janggiModernRule)
+        return VALUE_DRAW;
+
+    Value mc = pos.material_counting_result();
+    return mc > VALUE_DRAW ? Value(16)
+         : mc < VALUE_DRAW ? Value(-16)
+                           : VALUE_DRAW;
+  }
+
   // Skill structure is used to implement strength limit
   struct Skill {
     explicit Skill(int l) : level(l) {}
@@ -662,12 +672,12 @@ namespace {
     // Check if we have an upcoming move which draws by repetition, or
     // if the opponent had an alternative move earlier to this position.
     if (   !rootNode
-        && !pos.variant()->janggiModernRule
         && pos.rule50_count() >= 3
         && alpha < VALUE_DRAW
         && pos.has_game_cycle(ss->ply))
     {
-        alpha = value_draw(pos.this_thread());
+        alpha = pos.variant()->janggiModernRule ? value_janggimodern(pos)
+                                                : value_draw(pos.this_thread());
         if (alpha >= beta)
             return alpha;
     }
@@ -885,10 +895,11 @@ namespace {
         if (eval == VALUE_NONE)
             ss->staticEval = eval = evaluate(pos);
 
-        // Randomize draw evaluation (except in no-draw janggi modern, where we
-        // keep exact zero to avoid injecting artificial draw preference noise).
-        if (eval == VALUE_DRAW && !pos.variant()->janggiModernRule)
-            eval = value_draw(thisThread);
+        // For exact draws, keep normal draw jitter in most variants. In
+        // janggimodern we use a tiny material-counting tiebreak instead.
+        if (eval == VALUE_DRAW)
+            eval = pos.variant()->janggiModernRule ? value_janggimodern(pos)
+                                                   : value_draw(thisThread);
 
         // Can ttValue be used as a better position evaluation?
         if (    ttValue != VALUE_NONE
