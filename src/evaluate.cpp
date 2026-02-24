@@ -1644,14 +1644,14 @@ Value Eval::evaluate(const Position& pos) {
       bool pure = !pos.check_counting();
       bool classical = psq * 5 > (750 + pos.non_pawn_material() / 64) * (5 + r50) && !pure;
 
-      Value classicalV = Evaluation<NO_TRACE>(pos).value();
-      v = classical ? classicalV  // classical
-                    : adjusted_NNUE(); // NNUE
-
-      // janggimodern: NNUE network is typically trained on draw-heavy objectives.
-      // Blend in a small classical component to preserve variant-specific pressure.
-      if (pos.variant()->janggiModernRule && !classical)
-          v = (7 * v + classicalV) / 8;
+      if (pos.variant()->janggiModernRule)
+          v = adjusted_NNUE();
+      else
+      {
+          Value classicalV = Evaluation<NO_TRACE>(pos).value();
+          v = classical ? classicalV  // classical
+                        : adjusted_NNUE(); // NNUE
+      }
   }
 
   // Damp down the evaluation linearly when shuffling
@@ -1661,16 +1661,6 @@ Value Eval::evaluate(const Position& pos) {
       v = v * (2 * pos.n_move_rule() - pos.rule50_count()) / (2 * pos.n_move_rule());
       if (pos.material_counting())
           v += pos.material_counting_result() / (10 * std::max(2 * pos.n_move_rule() - pos.rule50_count(), 1));
-  }
-
-  // janggimodern: keep a tiny decisive bias near equality even with NNUE.
-  if (pos.variant()->janggiModernRule && std::abs(v) <= 64)
-  {
-      Value mc = pos.material_counting_result();
-      if (mc > VALUE_DRAW)
-          v += 12;
-      else if (mc < VALUE_DRAW)
-          v -= 12;
   }
 
   // Guarantee evaluation does not hit the virtual win/loss range
