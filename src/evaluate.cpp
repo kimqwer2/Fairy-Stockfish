@@ -1216,18 +1216,14 @@ namespace {
             centralElephants += (f >= FILE_D && f <= FILE_F);
         }
 
-        int horsePalacePressure = popcount(attackedBy[Us][KNIGHT] & kingRing[Them]);
-        int cannonPalacePressure = popcount(attackedBy[Us][JANGGI_CANNON] & kingRing[Them]);
         int palacePressure = popcount((attackedBy[Us][KNIGHT] | attackedBy[Us][JANGGI_ELEPHANT] | attackedBy[Us][JANGGI_CANNON])
                                       & kingRing[Them]);
-        int coordinatedPressure = horsePalacePressure && cannonPalacePressure;
 
-        score += make_score(15, 32) * advancedSoldiers
+        score += make_score(15, 31) * advancedSoldiers
                + make_score(22, 15) * activeHorses
                + make_score(8, 5) * activeCannons
                + make_score(25, 10) * centralElephants
-               + make_score(18, 16) * palacePressure
-               + make_score(8, 6) * coordinatedPressure;
+               + make_score(18, 16) * palacePressure;
     }
 
     // Capture the flag
