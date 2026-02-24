@@ -1534,7 +1534,7 @@ namespace {
     // More complex interactions that require fully populated attack bitboards
     // [장기 커스텀 1]: 장기에서는 체스의 '통과 폰(승급)' 개념이 독이 되므로 끕니다 (Passed 끄기).
     score +=  king<   WHITE>() - king<   BLACK>()
-            + (pos.variant()->materialCounting == JANGGI_MATERIAL ? SCORE_ZERO : passed< WHITE>() - passed< BLACK>())
+            + (pos.is_janggi_modern() ? SCORE_ZERO : passed< WHITE>() - passed< BLACK>())
             + variant<WHITE>() - variant<BLACK>();
 
     if (lazy_skip(LazyThreshold2) && Options["UCI_Variant"] == "chess")
@@ -1542,11 +1542,14 @@ namespace {
 
     // [장기 커스텀 2]: 장기에서는 체스의 '중앙 공간 장악' 개념이 독이 되므로 끕니다 (Space 끄기).
     score +=  threats<WHITE>() - threats<BLACK>()
-            + (pos.variant()->materialCounting == JANGGI_MATERIAL ? SCORE_ZERO : space<  WHITE>() - space<  BLACK>());
+            + (pos.is_janggi_modern() ? SCORE_ZERO : space<  WHITE>() - space<  BLACK>());
 
 make_v:
     // Derive single value from mg and eg parts of score
     Value v = winnable(score);
+
+    if (pos.is_janggi_modern() && std::abs(v) < 64)
+        v += 24 * ((pos.material_counting_result() > VALUE_DRAW) - (pos.material_counting_result() < VALUE_DRAW));
 
     // In case of tracing add all remaining individual evaluation terms
     if constexpr (T)
@@ -1557,7 +1560,8 @@ make_v:
     }
 
     // Evaluation grain
-    v = (v / 16) * 16;
+    if (!pos.is_janggi_modern())
+        v = (v / 16) * 16;
 
     // Side to move point of view
     v = (pos.side_to_move() == WHITE ? v : -v) + 80 * pos.captures_to_hand();
@@ -1650,7 +1654,7 @@ Value Eval::evaluate(const Position& pos) {
 
   // Damp down the evaluation linearly when shuffling
   // [장기 커스텀 3]: 장기는 '점수승'이 있으므로 50수 무승부 페널티(Damp down)를 면제합니다.
-  if (pos.n_move_rule() && pos.variant()->materialCounting != JANGGI_MATERIAL)
+  if (pos.n_move_rule() && !pos.is_janggi_modern())
   {
       v = v * (2 * pos.n_move_rule() - pos.rule50_count()) / (2 * pos.n_move_rule());
       if (pos.material_counting())

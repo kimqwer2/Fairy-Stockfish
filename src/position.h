@@ -225,6 +225,7 @@ public:
 
   CheckCount checks_remaining(Color c) const;
   MaterialCounting material_counting() const;
+  bool is_janggi_modern() const;
   CountingRule counting_rule() const;
 
   // Variant-specific properties
@@ -1146,6 +1147,11 @@ inline CheckCount Position::checks_remaining(Color c) const {
 inline MaterialCounting Position::material_counting() const {
   assert(var != nullptr);
   return var->materialCounting;
+}
+
+inline bool Position::is_janggi_modern() const {
+  assert(var != nullptr);
+  return var->materialCounting == JANGGI_MATERIAL && var->moveRepetitionIllegal && !var->bikjangRule;
 }
 
 inline CountingRule Position::counting_rule() const {
