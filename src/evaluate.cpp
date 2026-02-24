@@ -1532,15 +1532,17 @@ namespace {
     score += (mobility[WHITE] - mobility[BLACK]) * (1 + pos.captures_to_hand() + pos.must_capture() + pos.check_counting());
 
     // More complex interactions that require fully populated attack bitboards
+    // [장기 커스텀 1]: 장기에서는 체스의 '통과 폰(승급)' 개념이 독이 되므로 끕니다 (Passed 끄기).
     score +=  king<   WHITE>() - king<   BLACK>()
-            + passed< WHITE>() - passed< BLACK>()
+            + (pos.variant()->materialCounting == JANGGI_MATERIAL ? SCORE_ZERO : passed< WHITE>() - passed< BLACK>())
             + variant<WHITE>() - variant<BLACK>();
 
     if (lazy_skip(LazyThreshold2) && Options["UCI_Variant"] == "chess")
         goto make_v;
 
+    // [장기 커스텀 2]: 장기에서는 체스의 '중앙 공간 장악' 개념이 독이 되므로 끕니다 (Space 끄기).
     score +=  threats<WHITE>() - threats<BLACK>()
-            + space<  WHITE>() - space<  BLACK>();
+            + (pos.variant()->materialCounting == JANGGI_MATERIAL ? SCORE_ZERO : space<  WHITE>() - space<  BLACK>());
 
 make_v:
     // Derive single value from mg and eg parts of score
@@ -1647,7 +1649,8 @@ Value Eval::evaluate(const Position& pos) {
   }
 
   // Damp down the evaluation linearly when shuffling
-  if (pos.n_move_rule())
+  // [장기 커스텀 3]: 장기는 '점수승'이 있으므로 50수 무승부 페널티(Damp down)를 면제합니다.
+  if (pos.n_move_rule() && pos.variant()->materialCounting != JANGGI_MATERIAL)
   {
       v = v * (2 * pos.n_move_rule() - pos.rule50_count()) / (2 * pos.n_move_rule());
       if (pos.material_counting())
