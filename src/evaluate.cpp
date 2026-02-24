@@ -1220,9 +1220,9 @@ namespace {
         int cannonPalacePressure = popcount(attackedBy[Us][JANGGI_CANNON] & kingRing[Them]);
         int palacePressure = popcount((attackedBy[Us][KNIGHT] | attackedBy[Us][JANGGI_ELEPHANT] | attackedBy[Us][JANGGI_CANNON])
                                       & kingRing[Them]);
-        int coordinatedPressure = std::min(horsePalacePressure, cannonPalacePressure);
+        int coordinatedPressure = horsePalacePressure && cannonPalacePressure;
 
-        score += make_score(15, 30) * advancedSoldiers
+        score += make_score(15, 32) * advancedSoldiers
                + make_score(22, 15) * activeHorses
                + make_score(8, 5) * activeCannons
                + make_score(25, 10) * centralElephants
