@@ -88,8 +88,20 @@ namespace {
     return d > 14 ? 73 : 6 * d * d + 229 * d - 215;
   }
 
-  // Add a small random component to draw evaluations to avoid 3-fold blindness
-  Value value_draw(Thread* thisThread) {
+  // Add a small random component to draw evaluations to avoid 3-fold blindness.
+  // Janggi modern has material adjudication and no practical draw objective,
+  // so steer repetitions away from zero according to material counting.
+  Value value_draw(const Position& pos) {
+    if (Options["UCI_Variant"] == "janggimodern")
+    {
+        Value mc = pos.material_counting_result();
+        int sign = (mc > VALUE_ZERO) - (mc < VALUE_ZERO);
+        if (pos.side_to_move() == BLACK)
+            sign = -sign;
+        return VALUE_DRAW + Value(12 * sign);
+    }
+
+    Thread* thisThread = pos.this_thread();
     return VALUE_DRAW + Value(2 * (thisThread->nodes & 1) - 1);
   }
 
@@ -666,7 +678,7 @@ namespace {
         && alpha < VALUE_DRAW
         && pos.has_game_cycle(ss->ply))
     {
-        alpha = value_draw(pos.this_thread());
+        alpha = value_draw(pos);
         if (alpha >= beta)
             return alpha;
     }
@@ -722,7 +734,7 @@ namespace {
         if (   Threads.stop.load(std::memory_order_relaxed)
             || ss->ply >= MAX_PLY)
             return (ss->ply >= MAX_PLY && !ss->inCheck) ? evaluate(pos)
-                                                        : value_draw(pos.this_thread());
+                                                        : value_draw(pos);
 
         // Step 3. Mate distance pruning. Even if we mate at the next move our score
         // would be at best mate_in(ss->ply+1), but if alpha is already bigger because
@@ -886,7 +898,7 @@ namespace {
 
         // Randomize draw evaluation
         if (eval == VALUE_DRAW)
-            eval = value_draw(thisThread);
+            eval = value_draw(pos);
 
         // Can ttValue be used as a better position evaluation?
         if (    ttValue != VALUE_NONE

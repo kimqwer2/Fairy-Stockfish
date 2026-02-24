@@ -215,6 +215,11 @@ using namespace Trace;
 
 namespace {
 
+  inline bool is_janggi_modern(const Position& pos) {
+    return Options["UCI_Variant"] == "janggimodern"
+        || (pos.material_counting() == JANGGI_MATERIAL && !pos.bikjang());
+  }
+
   // Threshold for lazy and space evaluation
   constexpr Value LazyThreshold1    =  Value(1565);
   constexpr Value LazyThreshold2    =  Value(1102);
@@ -1414,6 +1419,11 @@ namespace {
     // Compute the scale factor for the winning side
     Color strongSide = eg > VALUE_DRAW ? WHITE : BLACK;
     int sf = me->scale_factor(pos, strongSide);
+
+    // Janggi modern uses material adjudication instead of drawish endgame conventions,
+    // so we should not shrink endgame scores with generic draw scale factors.
+    if (is_janggi_modern(pos))
+        sf = std::max(sf, int(SCALE_FACTOR_NORMAL));
 
     // If scale factor is not already specific, scale up/down via general heuristics
     if (sf == SCALE_FACTOR_NORMAL && !pos.captures_to_hand() && !pos.material_counting())
