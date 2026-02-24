@@ -1545,6 +1545,28 @@ namespace {
             + (pos.variant()->materialCounting == JANGGI_MATERIAL ? SCORE_ZERO : space<  WHITE>() - space<  BLACK>());
 
 make_v:
+    // Janggi modern has no draw adjudication in practical play, so keep an explicit
+    // material-counting pressure term in eval to reduce neutral 0.00 drifting.
+    if (pos.variant()->janggiModernRule)
+    {
+        int mat =   13 * (pos.count(WHITE, ROOK) - pos.count(BLACK, ROOK))
+                  +  7 * (pos.count(WHITE, JANGGI_CANNON) - pos.count(BLACK, JANGGI_CANNON))
+                  +  5 * (pos.count(WHITE, HORSE) - pos.count(BLACK, HORSE))
+                  +  3 * (pos.count(WHITE, JANGGI_ELEPHANT) - pos.count(BLACK, JANGGI_ELEPHANT))
+                  +  3 * (pos.count(WHITE, WAZIR) - pos.count(BLACK, WAZIR))
+                  +  2 * (pos.count(WHITE, SOLDIER) - pos.count(BLACK, SOLDIER));
+
+        int soldierPush = 0;
+        Bitboard whiteSoldiers = pos.pieces(WHITE, SOLDIER);
+        Bitboard blackSoldiers = pos.pieces(BLACK, SOLDIER);
+        while (whiteSoldiers)
+            soldierPush += int(relative_rank(WHITE, pop_lsb(whiteSoldiers)) >= RANK_5);
+        while (blackSoldiers)
+            soldierPush -= int(relative_rank(BLACK, pop_lsb(blackSoldiers)) >= RANK_5);
+
+        score += make_score(10 * mat + 14 * soldierPush, 18 * mat + 22 * soldierPush);
+    }
+
     // Derive single value from mg and eg parts of score
     Value v = winnable(score);
 
@@ -1556,8 +1578,10 @@ make_v:
         Trace::add(MOBILITY, mobility[WHITE], mobility[BLACK]);
     }
 
-    // Evaluation grain
-    v = (v / 16) * 16;
+    // Evaluation grain: keep finer precision for janggi modern where tiny
+    // material-counting edges should be converted into practical wins.
+    if (!pos.variant()->janggiModernRule)
+        v = (v / 16) * 16;
 
     // Side to move point of view
     v = (pos.side_to_move() == WHITE ? v : -v) + 80 * pos.captures_to_hand();

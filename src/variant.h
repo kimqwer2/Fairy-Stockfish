@@ -134,6 +134,7 @@ struct Variant {
   bool shogiPawnDropMateIllegal = false;
   bool shatarMateRule = false;
   bool bikjangRule = false;
+  bool janggiModernRule = false;
   Value extinctionValue = VALUE_NONE;
   bool extinctionClaim = false;
   bool extinctionPseudoRoyal = false;
@@ -222,6 +223,7 @@ struct Variant {
   Variant* init() {
       nnueAlias = "";
       endgameEval = EG_EVAL_CHESS;
+      janggiModernRule = false;
       return this;
   }
 

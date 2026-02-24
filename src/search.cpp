@@ -662,6 +662,7 @@ namespace {
     // Check if we have an upcoming move which draws by repetition, or
     // if the opponent had an alternative move earlier to this position.
     if (   !rootNode
+        && !pos.variant()->janggiModernRule
         && pos.rule50_count() >= 3
         && alpha < VALUE_DRAW
         && pos.has_game_cycle(ss->ply))
@@ -884,8 +885,9 @@ namespace {
         if (eval == VALUE_NONE)
             ss->staticEval = eval = evaluate(pos);
 
-        // Randomize draw evaluation
-        if (eval == VALUE_DRAW)
+        // Randomize draw evaluation (except in no-draw janggi modern, where we
+        // keep exact zero to avoid injecting artificial draw preference noise).
+        if (eval == VALUE_DRAW && !pos.variant()->janggiModernRule)
             eval = value_draw(thisThread);
 
         // Can ttValue be used as a better position evaluation?
