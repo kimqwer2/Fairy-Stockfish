@@ -1644,14 +1644,8 @@ Value Eval::evaluate(const Position& pos) {
       bool pure = !pos.check_counting();
       bool classical = psq * 5 > (750 + pos.non_pawn_material() / 64) * (5 + r50) && !pure;
 
-      if (pos.variant()->janggiModernRule)
-          v = adjusted_NNUE();
-      else
-      {
-          Value classicalV = Evaluation<NO_TRACE>(pos).value();
-          v = classical ? classicalV  // classical
-                        : adjusted_NNUE(); // NNUE
-      }
+      v = classical ? Evaluation<NO_TRACE>(pos).value()  // classical
+                    : adjusted_NNUE();                   // NNUE
   }
 
   // Damp down the evaluation linearly when shuffling

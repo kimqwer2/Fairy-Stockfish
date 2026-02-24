@@ -1803,7 +1803,6 @@ namespace {
     Variant* janggi_modern_variant() {
         Variant* v = janggi_variant()->init();
         v->bikjangRule = false;
-        v->janggiModernRule = true;
         v->materialCounting = JANGGI_MATERIAL;
         v->moveRepetitionIllegal = true;
         v->nFoldRule = 4; // avoid nFold being triggered before move repetition
