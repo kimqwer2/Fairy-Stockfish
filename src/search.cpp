@@ -93,18 +93,6 @@ namespace {
     return VALUE_DRAW + Value(2 * (thisThread->nodes & 1) - 1);
   }
 
-  // Variants with material counting (e.g. janggi) are not truly draw-centric:
-  // prefer a tiny deterministic bias from counting instead of random draw jitter.
-  Value value_drawish(const Position& pos, Thread* thisThread) {
-    if (!pos.material_counting())
-        return value_draw(thisThread);
-
-    Value mc = pos.material_counting_result();
-    return mc > VALUE_DRAW ? Value(8)
-         : mc < VALUE_DRAW ? Value(-8)
-                           : VALUE_DRAW;
-  }
-
   // Skill structure is used to implement strength limit
   struct Skill {
     explicit Skill(int l) : level(l) {}
@@ -678,7 +666,7 @@ namespace {
         && alpha < VALUE_DRAW
         && pos.has_game_cycle(ss->ply))
     {
-        alpha = value_drawish(pos, pos.this_thread());
+        alpha = value_draw(pos.this_thread());
         if (alpha >= beta)
             return alpha;
     }
@@ -734,7 +722,7 @@ namespace {
         if (   Threads.stop.load(std::memory_order_relaxed)
             || ss->ply >= MAX_PLY)
             return (ss->ply >= MAX_PLY && !ss->inCheck) ? evaluate(pos)
-                                                        : value_drawish(pos, pos.this_thread());
+                                                        : value_draw(pos.this_thread());
 
         // Step 3. Mate distance pruning. Even if we mate at the next move our score
         // would be at best mate_in(ss->ply+1), but if alpha is already bigger because
@@ -898,7 +886,7 @@ namespace {
 
         // Randomize draw evaluation
         if (eval == VALUE_DRAW)
-            eval = value_drawish(pos, thisThread);
+            eval = value_draw(thisThread);
 
         // Can ttValue be used as a better position evaluation?
         if (    ttValue != VALUE_NONE

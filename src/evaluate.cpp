@@ -1186,6 +1186,46 @@ namespace {
 
     Score score = SCORE_ZERO;
 
+    // Janggi strategy terms: emphasize active cannon/horse/elephant play and
+    // soldier pressure instead of chess-centric structure assumptions.
+    if (pos.variant()->materialCounting == JANGGI_MATERIAL)
+    {
+        const Rank frontRank = std::min(Rank((pos.max_rank() + 1) / 2 + 1), pos.max_rank());
+
+        int advancedSoldiers = 0;
+        Bitboard soldiers = pos.pieces(Us, SOLDIER);
+        while (soldiers)
+            advancedSoldiers += relative_rank(Us, pop_lsb(soldiers), pos.max_rank()) >= frontRank;
+
+        int activeHorses = 0;
+        Bitboard horses = pos.pieces(Us, KNIGHT);
+        while (horses)
+            activeHorses += relative_rank(Us, pop_lsb(horses), pos.max_rank()) >= frontRank;
+
+        int activeCannons = 0;
+        Bitboard cannons = pos.pieces(Us, JANGGI_CANNON);
+        while (cannons)
+            activeCannons += relative_rank(Us, pop_lsb(cannons), pos.max_rank()) >= frontRank;
+
+        int centralElephants = 0;
+        Bitboard elephants = pos.pieces(Us, JANGGI_ELEPHANT);
+        while (elephants)
+        {
+            Square s = pop_lsb(elephants);
+            File f = file_of(s);
+            centralElephants += (f >= FILE_D && f <= FILE_F);
+        }
+
+        int palacePressure = popcount((attackedBy[Us][KNIGHT] | attackedBy[Us][JANGGI_ELEPHANT] | attackedBy[Us][JANGGI_CANNON])
+                                      & kingRing[Them]);
+
+        score += make_score(20, 16) * advancedSoldiers
+               + make_score(12, 10) * activeHorses
+               + make_score(14, 12) * activeCannons
+               + make_score(10, 14) * centralElephants
+               + make_score(18, 16) * palacePressure;
+    }
+
     // Capture the flag
     if (pos.flag_region(Us))
     {
