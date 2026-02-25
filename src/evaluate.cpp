@@ -1541,6 +1541,7 @@ namespace {
 
     score +=  threats<WHITE>() - threats<BLACK>()
             + space<  WHITE>() - space<  BLACK>();
+
 make_v:
     // Derive single value from mg and eg parts of score
     Value v = winnable(score);
