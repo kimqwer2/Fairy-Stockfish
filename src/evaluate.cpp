@@ -1218,12 +1218,22 @@ namespace {
 
         int palacePressure = popcount((attackedBy[Us][KNIGHT] | attackedBy[Us][JANGGI_ELEPHANT] | attackedBy[Us][JANGGI_CANNON])
                                       & kingRing[Them]);
+        int palaceGuards = popcount((pos.pieces(Us, WAZIR) | pos.pieces(Us, JANGGI_ELEPHANT) | pos.pieces(Us, KNIGHT))
+                                    & kingRing[Us]);
+
+        int undevelopedCannons = 0;
+        int cannonBackRank = std::max(int(frontRank) - 2, int(RANK_2));
+        cannons = pos.pieces(Us, JANGGI_CANNON);
+        while (cannons)
+            undevelopedCannons += int(relative_rank(Us, pop_lsb(cannons), pos.max_rank())) <= cannonBackRank;
 
         score += make_score(15, 31) * advancedSoldiers
                + make_score(22, 15) * activeHorses
                + make_score(8, 5) * activeCannons
                + make_score(25, 10) * centralElephants
-               + make_score(18, 16) * palacePressure;
+               + make_score(18, 16) * palacePressure
+               + make_score(6, 14) * palaceGuards
+               - make_score(10, 6) * undevelopedCannons;
     }
 
     // Capture the flag
