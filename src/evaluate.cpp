@@ -1227,13 +1227,23 @@ namespace {
         while (cannons)
             undevelopedCannons += int(relative_rank(Us, pop_lsb(cannons), pos.max_rank())) <= cannonBackRank;
 
+        int horseEndgameBoost = 0;
+        int cannonEndgamePenalty = 0;
+        if (pos.non_pawn_material() <= 2800)
+        {
+            horseEndgameBoost = pos.count<KNIGHT>(Us);
+            cannonEndgamePenalty = std::max(pos.count<JANGGI_CANNON>(Us) - 1, 0);
+        }
+
         score += make_score(15, 31) * advancedSoldiers
                + make_score(22, 15) * activeHorses
                + make_score(8, 5) * activeCannons
                + make_score(25, 10) * centralElephants
                + make_score(18, 16) * palacePressure
                + make_score(6, 14) * palaceGuards
-               - make_score(10, 6) * undevelopedCannons;
+               - make_score(10, 6) * undevelopedCannons
+               + make_score(4, 16) * horseEndgameBoost
+               - make_score(2, 14) * cannonEndgamePenalty;
     }
 
     // Capture the flag
