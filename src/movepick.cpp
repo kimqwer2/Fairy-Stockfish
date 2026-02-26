@@ -149,7 +149,37 @@ void MovePicker::score() {
 
 #ifdef LARGEBOARDS
           if (myoukBlockSquares & to_sq(m))
-              m.value += 350;
+          {
+              PieceType pt = type_of(pos.moved_piece(m));
+              int myoukBonus = 0;
+              if (pt == SOLDIER || pt == PAWN)
+                  myoukBonus = 520;
+              else if (pt == HORSE)
+                  myoukBonus = 430;
+              else if (pt == JANGGI_ELEPHANT)
+                  myoukBonus = 280;
+              else if (pt == WAZIR)
+                  myoukBonus = 220;
+              else if (pt == JANGGI_CANNON)
+                  myoukBonus = 160;
+              else if (pt == ROOK)
+                  myoukBonus = 0;
+
+              if (myoukBonus)
+              {
+                  Bitboard occ = pos.pieces();
+                  Square to = to_sq(m);
+                  if (type_of(m) == DROP)
+                      occ |= to;
+                  else
+                      occ = (occ ^ from_sq(m)) | to;
+
+                  int att = popcount(pos.attackers_to(to, occ, ~pos.side_to_move()));
+                  int def = popcount(pos.attackers_to(to, occ, pos.side_to_move()));
+                  if (att <= def + 1)
+                      m.value += myoukBonus;
+              }
+          }
 #endif
       }
 
