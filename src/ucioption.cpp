@@ -51,6 +51,43 @@ Value JanggiElephantValue[PHASE_NB] = { JanggiElephantValueMg, JanggiElephantVal
 Value JanggiGuardValue[PHASE_NB] = { WazirValueMg, WazirValueEg };
 Value JanggiSoldierValue[PHASE_NB] = { SoldierValueMg, SoldierValueEg };
 
+namespace {
+
+bool is_janggi_variant(const Variant* v) {
+    return v
+        && v->variantTemplate == "janggi"
+        && (v->pieceTypes & JANGGI_CANNON)
+        && (v->pieceTypes & JANGGI_ELEPHANT)
+        && (v->pieceTypes & WAZIR)
+        && (v->pieceTypes & SOLDIER);
+}
+
+const Variant* active_variant() {
+    auto itOpt = Options.find("UCI_Variant");
+    if (itOpt == Options.end())
+        return nullptr;
+
+    auto itVar = variants.find(std::string(itOpt->second));
+    return itVar == variants.end() ? nullptr : itVar->second;
+}
+
+void override_janggi_piece_values(Variant* v) {
+    v->pieceValue[MG][ROOK] = JanggiRookValue[MG];
+    v->pieceValue[EG][ROOK] = JanggiRookValue[EG];
+    v->pieceValue[MG][JANGGI_CANNON] = JanggiCannonValue[MG];
+    v->pieceValue[EG][JANGGI_CANNON] = JanggiCannonValue[EG];
+    v->pieceValue[MG][HORSE] = JanggiHorseValue[MG];
+    v->pieceValue[EG][HORSE] = JanggiHorseValue[EG];
+    v->pieceValue[MG][JANGGI_ELEPHANT] = JanggiElephantValue[MG];
+    v->pieceValue[EG][JANGGI_ELEPHANT] = JanggiElephantValue[EG];
+    v->pieceValue[MG][WAZIR] = JanggiGuardValue[MG];
+    v->pieceValue[EG][WAZIR] = JanggiGuardValue[EG];
+    v->pieceValue[MG][SOLDIER] = JanggiSoldierValue[MG];
+    v->pieceValue[EG][SOLDIER] = JanggiSoldierValue[EG];
+}
+
+}
+
 void UpdateJanggiMaterialValues() {
     auto update_piece = [](PieceType pt, const Value values[PHASE_NB]) {
         for (Color c : {WHITE, BLACK}) {
@@ -66,6 +103,13 @@ void UpdateJanggiMaterialValues() {
     update_piece(JANGGI_ELEPHANT, JanggiElephantValue);
     update_piece(WAZIR, JanggiGuardValue);
     update_piece(SOLDIER, JanggiSoldierValue);
+
+    for (auto& [name, vConst] : variants)
+        if (is_janggi_variant(vConst))
+            override_janggi_piece_values(const_cast<Variant*>(vConst));
+
+    if (const Variant* v = active_variant(); is_janggi_variant(v))
+        PSQT::init(v);
 }
 
 // standard variants of XBoard/WinBoard
@@ -115,6 +159,13 @@ void load_janggi_material_options() {
 
 void on_janggi_material_change(const Option&) {
     load_janggi_material_options();
+
+    if (const Variant* v = active_variant(); is_janggi_variant(v))
+    {
+        init_variant(v);
+        PSQT::init(v);
+    }
+
     Search::clear();
 }
 
