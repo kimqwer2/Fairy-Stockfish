@@ -88,6 +88,7 @@ void refresh_psqt_for_current_variant() {
     PSQT::init(v);
 
     Search::clear();
+    TT.clear();
 
     for (Thread* th : Threads)
     {
