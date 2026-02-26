@@ -1822,6 +1822,15 @@ moves_loop: // When in check, search starts from here
     bonus2 = bestValue > beta + PawnValueMg ? bonus1                                 // larger bonus
                                             : std::min(bonus1, stat_bonus(depth));   // smaller bonus
 
+#ifdef LARGEBOARDS
+    const bool janggiModern =   pos.variant()->variantTemplate == "janggi"
+                             && pos.variant()->materialCounting == JANGGI_MATERIAL;
+    const PieceType bestMover = type_of(moved_piece);
+    const bool janggiTacticalMover = bestMover == PAWN || bestMover == SOLDIER || bestMover == HORSE;
+    if (janggiModern && pos.capture_or_promotion(bestMove) && janggiTacticalMover)
+        bonus1 += bonus1 / 8; // +12.5% capture-history reinforcement for key janggi tactical movers
+#endif
+
     if (!pos.capture_or_promotion(bestMove))
     {
         // Increase stats for the best move in case it was a quiet move

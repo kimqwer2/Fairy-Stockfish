@@ -107,29 +107,6 @@ void MovePicker::score() {
 
   static_assert(Type == CAPTURES || Type == QUIETS || Type == EVASIONS, "Wrong type");
 
-#ifdef LARGEBOARDS
-  Bitboard myoukBlockSquares = 0;
-  if constexpr (Type == QUIETS)
-      if (   pos.variant()->variantTemplate == "janggi"
-          && pos.variant()->materialCounting == JANGGI_MATERIAL)
-      {
-          Color us = pos.side_to_move();
-          for (Bitboard b = pos.pieces(~us, HORSE); b;)
-          {
-              Square e = pop_lsb(b);
-              Bitboard dst = PseudoAttacks[WHITE][HORSE][e];
-              while (dst)
-                  myoukBlockSquares |= between_bb(e, pop_lsb(dst), HORSE);
-          }
-          for (Bitboard b = pos.pieces(~us, JANGGI_ELEPHANT); b;)
-          {
-              Square e = pop_lsb(b);
-              Bitboard dst = PseudoAttacks[WHITE][JANGGI_ELEPHANT][e];
-              while (dst)
-                  myoukBlockSquares |= between_bb(e, pop_lsb(dst), JANGGI_ELEPHANT);
-          }
-      }
-#endif
 
   for (auto& m : *this)
       if constexpr (Type == CAPTURES)
@@ -147,22 +124,6 @@ void MovePicker::score() {
                    +     (*continuationHistory[5])[history_slot(pos.moved_piece(m))][to_sq(m)]
                    + (ply < MAX_LPH ? std::min(4, depth / 3) * (*lowPlyHistory)[ply][from_to(m)] : 0);
 
-#ifdef LARGEBOARDS
-          if (myoukBlockSquares & to_sq(m))
-          {
-              PieceType pt = type_of(pos.moved_piece(m));
-              int myoukBonus = 0;
-              if (pt == SOLDIER || pt == PAWN)
-                  myoukBonus = 150;
-              else if (pt == HORSE)
-                  myoukBonus = 100;
-              else if (pt == JANGGI_ELEPHANT || pt == WAZIR)
-                  myoukBonus = 60;
-              else if (pt == JANGGI_CANNON)
-                  myoukBonus = 30;
-              m.value += myoukBonus;
-          }
-#endif
       }
 
       else // Type == EVASIONS
