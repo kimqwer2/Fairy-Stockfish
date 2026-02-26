@@ -1649,6 +1649,30 @@ make_v:
 
 Value Eval::evaluate(const Position& pos) {
 
+  if (pos.material_counting() == JANGGI_MATERIAL)
+  {
+      int score = 0;
+
+      constexpr PieceType TunedJanggiPieces[] = {
+          ROOK,
+          JANGGI_CANNON,
+          HORSE,
+          JANGGI_ELEPHANT,
+          WAZIR,
+          SOLDIER
+      };
+
+      for (PieceType pt : TunedJanggiPieces)
+      {
+          score += int(PieceValue[MG][pt]) * (pos.count(WHITE, pt) - pos.count(BLACK, pt));
+      }
+
+      // Han (black) receives 1.5 points komi.
+      score -= 150;
+
+      return pos.side_to_move() == WHITE ? Value(score) : Value(-score);
+  }
+
   Value v;
 
   if (!Eval::useNNUE || !pos.nnue_applicable())

@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstring>
 #include <ostream>
 #include <sstream>
 #include <iostream>
@@ -82,7 +83,13 @@ void apply_janggi_values_from_options() {
 
 void refresh_psqt_for_current_variant() {
     const Variant* v = variants.find(Options["UCI_Variant"])->second;
+
     PSQT::init(v);
+
+    Search::clear();
+
+    for (Thread* th : Threads)
+        std::memset(static_cast<void*>(&th->materialTable), 0, sizeof(th->materialTable));
 }
 
 void on_janggi_value_change(Phase ph, PieceType pt, const Option& o) {

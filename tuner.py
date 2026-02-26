@@ -72,6 +72,11 @@ class UCIEngine:
         for name, value in options.items():
             self._setoption(name, str(value), wait_ready=True)
 
+        # Force engine-side cache refresh path after applying trial options.
+        self._send("ucinewgame")
+        self._send("isready")
+        self._read_until("readyok")
+
     def new_game(self) -> None:
         self._send("ucinewgame")
         self._send("isready")
