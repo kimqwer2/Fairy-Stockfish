@@ -61,6 +61,31 @@ namespace Stockfish {
 
 const Variant* currentNnueVariant;
 
+namespace {
+
+const Value DefaultJanggiPieceValue[PHASE_NB][6] = {
+  { RookValueMg, JanggiCannonPieceValueMg, HorseValueMg, JanggiElephantValueMg, WazirValueMg, SoldierValueMg },
+  { RookValueEg, JanggiCannonPieceValueEg, HorseValueEg, JanggiElephantValueEg, WazirValueEg, SoldierValueEg },
+};
+
+PieceType janggi_piece_type_from_index(int idx) {
+    constexpr PieceType PieceByIndex[6] = { ROOK, JANGGI_CANNON, HORSE, JANGGI_ELEPHANT, WAZIR, SOLDIER };
+    return PieceByIndex[idx];
+}
+
+void set_piece_value_arrays(Phase ph, PieceType pt, Value value) {
+    PieceValue[ph][pt] = value;
+    PieceValue[ph][make_piece(WHITE, pt)] = value;
+    PieceValue[ph][make_piece(BLACK, pt)] = value;
+
+    EvalPieceValue[ph][make_piece(WHITE, pt)] = value;
+    EvalPieceValue[ph][make_piece(BLACK, pt)] = value;
+
+    CapturePieceValue[ph][make_piece(WHITE, pt)] = value;
+    CapturePieceValue[ph][make_piece(BLACK, pt)] = value;
+}
+}
+
 namespace Eval {
 
   bool useNNUE;
@@ -170,6 +195,23 @@ namespace Eval {
             sync_cout << "info string classical evaluation enabled" << sync_endl;
     }
   }
+}
+
+
+void set_janggi_piece_value(Phase ph, PieceType pt, Value value) {
+    if (ph >= PHASE_NB || ph < MG)
+        return;
+
+    if (pt != ROOK && pt != JANGGI_CANNON && pt != HORSE && pt != JANGGI_ELEPHANT && pt != WAZIR && pt != SOLDIER)
+        return;
+
+    set_piece_value_arrays(ph, pt, value);
+}
+
+void reset_janggi_piece_values() {
+    for (int ph = MG; ph <= EG; ++ph)
+        for (int idx = 0; idx < 6; ++idx)
+            set_piece_value_arrays(Phase(ph), janggi_piece_type_from_index(idx), DefaultJanggiPieceValue[ph][idx]);
 }
 
 namespace Trace {
