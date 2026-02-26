@@ -21,6 +21,7 @@
 #include <cstring>
 #include <ostream>
 #include <sstream>
+#include <string>
 #include <iostream>
 
 #include "evaluate.h"
@@ -89,7 +90,10 @@ void refresh_psqt_for_current_variant() {
     Search::clear();
 
     for (Thread* th : Threads)
+    {
         std::memset(static_cast<void*>(&th->materialTable), 0, sizeof(th->materialTable));
+        std::memset(static_cast<void*>(&th->pawnsTable), 0, sizeof(th->pawnsTable));
+    }
 }
 
 void on_janggi_value_change(Phase ph, PieceType pt, const Option& o) {

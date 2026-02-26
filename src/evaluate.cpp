@@ -1649,7 +1649,9 @@ make_v:
 
 Value Eval::evaluate(const Position& pos) {
 
-  if (pos.material_counting() == JANGGI_MATERIAL)
+  if (   pos.material_counting() == JANGGI_MATERIAL
+      || Options["UCI_Variant"] == "janggi"
+      || Options["UCI_Variant"] == "janggimodern")
   {
       int score = 0;
 
@@ -1663,11 +1665,9 @@ Value Eval::evaluate(const Position& pos) {
       };
 
       for (PieceType pt : TunedJanggiPieces)
-      {
           score += int(PieceValue[MG][pt]) * (pos.count(WHITE, pt) - pos.count(BLACK, pt));
-      }
 
-      // Han (black) receives 1.5 points komi.
+      // Han (black) receives 1.5 point komi.
       score -= 150;
 
       return pos.side_to_move() == WHITE ? Value(score) : Value(-score);
@@ -1680,7 +1680,7 @@ Value Eval::evaluate(const Position& pos) {
   else
   {
       // Scale and shift NNUE for compatibility with search and classical evaluation
-      auto  adjusted_NNUE = [&]()
+      auto adjusted_NNUE = [&]()
       {
          int scale =   903
                      + 32 * pos.count<PAWN>()
