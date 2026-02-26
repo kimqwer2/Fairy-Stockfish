@@ -1094,9 +1094,10 @@ moves_loop: // When in check, search starts from here
     singularQuietLMR = moveCountPruning = false;
     bool doubleExtension = false;
 
+    bool janggiModernNode = false;
 #ifdef LARGEBOARDS
-    const bool janggiModernNode =   pos.variant()->variantTemplate == "janggi"
-                                 && pos.variant()->materialCounting == JANGGI_MATERIAL;
+    janggiModernNode =   pos.variant()->variantTemplate == "janggi"
+                      && pos.variant()->materialCounting == JANGGI_MATERIAL;
 #endif
 
     // Indicate PvNodes that will probably fail low if the node was searched
@@ -1174,21 +1175,6 @@ moves_loop: // When in check, search starts from here
           }
           else
           {
-#ifdef LARGEBOARDS
-              if (   janggiModernNode
-                  && !ss->inCheck
-                  && (type_of(movedPiece) == HORSE || type_of(movedPiece) == JANGGI_ELEPHANT))
-              {
-                  int enemyAttackers = popcount(pos.attackers_to(to_sq(move), ~us));
-                  if (enemyAttackers >= 2)
-                  {
-                      int ourDefenders = popcount(pos.attackers_to(to_sq(move), us));
-                      if (ourDefenders + 1 < enemyAttackers)
-                          continue;
-                  }
-              }
-#endif
-
               // Continuation history based pruning (~20 Elo)
               if (   lmrDepth < 5
                   && (*contHist[0])[history_slot(movedPiece)][to_sq(move)] < CounterMovePruneThreshold
@@ -1228,7 +1214,15 @@ moves_loop: // When in check, search starts from here
           && (tte->bound() & BOUND_LOWER)
           &&  tte->depth() >= depth - 3)
       {
-          Value singularBeta = ttValue - 2 * depth;
+          int singularMargin = 2 * depth;
+#ifdef LARGEBOARDS
+          if (   janggiModernNode
+              && !captureOrPromotion
+              && (type_of(movedPiece) == JANGGI_CANNON || type_of(movedPiece) == HORSE || type_of(movedPiece) == JANGGI_ELEPHANT)
+              && relative_rank(us, to_sq(move), pos.max_rank()) >= RANK_6)
+              singularMargin = std::max(1, singularMargin - depth / 2);
+#endif
+          Value singularBeta = ttValue - singularMargin;
           Depth singularDepth = (depth - 1) / 2;
 
           ss->excludedMove = move;
@@ -1281,6 +1275,16 @@ moves_loop: // When in check, search starts from here
                &&  (ss->inCheck || MoveList<CAPTURES>(pos).size() == 1))
           extension = 1;
 
+#ifdef LARGEBOARDS
+      // Janggi modern: extend quiet forward invasions by core tactical pieces.
+      if (   !extension
+          && janggiModernNode
+          && !captureOrPromotion
+          && (type_of(movedPiece) == JANGGI_CANNON || type_of(movedPiece) == HORSE || type_of(movedPiece) == JANGGI_ELEPHANT)
+          && relative_rank(us, to_sq(move), pos.max_rank()) >= RANK_6
+          && depth >= 6)
+          extension = 1;
+#endif
 
       // Add extension to new depth
       newDepth += extension;
@@ -1842,24 +1846,10 @@ moves_loop: // When in check, search starts from here
     bonus2 = bestValue > beta + PawnValueMg ? bonus1                                 // larger bonus
                                             : std::min(bonus1, stat_bonus(depth));   // smaller bonus
 
-#ifdef LARGEBOARDS
-    const bool janggiModern =   pos.variant()->variantTemplate == "janggi"
-                             && pos.variant()->materialCounting == JANGGI_MATERIAL;
-    const PieceType bestMover = type_of(moved_piece);
-    const bool janggiTacticalCaptureMover = bestMover == PAWN || bestMover == SOLDIER || bestMover == HORSE;
-    if (janggiModern && pos.capture_or_promotion(bestMove) && janggiTacticalCaptureMover)
-        bonus1 += bonus1 / 8; // +12.5% capture-history reinforcement for key janggi tactical movers
-#endif
-
     if (!pos.capture_or_promotion(bestMove))
     {
-        int quietBonus = bonus2;
-#ifdef LARGEBOARDS
-        if (janggiModern && (bestMover == JANGGI_CANNON || bestMover == HORSE))
-            quietBonus += quietBonus / 4; // +25% quiet-history reinforcement for core janggi maneuvers
-#endif
         // Increase stats for the best move in case it was a quiet move
-        update_quiet_stats(pos, ss, bestMove, quietBonus, depth);
+        update_quiet_stats(pos, ss, bestMove, bonus2, depth);
 
         // Decrease stats for all non-best quiet moves
         for (int i = 0; i < quietCount; ++i)
