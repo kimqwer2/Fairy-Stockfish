@@ -1094,6 +1094,11 @@ moves_loop: // When in check, search starts from here
     singularQuietLMR = moveCountPruning = false;
     bool doubleExtension = false;
 
+#ifdef LARGEBOARDS
+    const bool janggiModernNode =   pos.variant()->variantTemplate == "janggi"
+                                 && pos.variant()->materialCounting == JANGGI_MATERIAL;
+#endif
+
     // Indicate PvNodes that will probably fail low if the node was searched
     // at a depth equal or greater than the current depth, and the result of this search was a fail low.
     bool likelyFailLow =    PvNode
@@ -1322,6 +1327,21 @@ moves_loop: // When in check, search starts from here
 
           if (!captureOrPromotion)
           {
+#ifdef LARGEBOARDS
+              if (janggiModernNode)
+              {
+                  Rank toRel = relative_rank(us, to_sq(move), pos.max_rank());
+                  Rank fromRel = relative_rank(us, from_sq(move), pos.max_rank());
+
+                  if (   (type_of(movedPiece) == JANGGI_CANNON || type_of(movedPiece) == HORSE || type_of(movedPiece) == JANGGI_ELEPHANT)
+                      && toRel >= RANK_6)
+                      r = std::max(Depth(0), Depth(r - 1));
+
+                  if (toRel < fromRel)
+                      r = std::min(Depth(63), Depth(r + 1));
+              }
+#endif
+
               // Increase reduction if ttMove is a capture (~3 Elo)
               if (ttCapture)
                   r++;
@@ -1821,10 +1841,25 @@ moves_loop: // When in check, search starts from here
     bonus2 = bestValue > beta + PawnValueMg ? bonus1                                 // larger bonus
                                             : std::min(bonus1, stat_bonus(depth));   // smaller bonus
 
+#ifdef LARGEBOARDS
+    const bool janggiModern =   pos.variant()->variantTemplate == "janggi"
+                             && pos.variant()->materialCounting == JANGGI_MATERIAL;
+    const PieceType bestMover = type_of(moved_piece);
+    if (   janggiModern
+        && pos.capture_or_promotion(bestMove)
+        && (bestMover == PAWN || bestMover == SOLDIER || bestMover == HORSE))
+        bonus1 += bonus1 / 5;
+#endif
+
     if (!pos.capture_or_promotion(bestMove))
     {
+        int quietBonus = bonus2;
+#ifdef LARGEBOARDS
+        if (janggiModern && (bestMover == JANGGI_CANNON || bestMover == HORSE))
+            quietBonus += quietBonus / 5;
+#endif
         // Increase stats for the best move in case it was a quiet move
-        update_quiet_stats(pos, ss, bestMove, bonus2, depth);
+        update_quiet_stats(pos, ss, bestMove, quietBonus, depth);
 
         // Decrease stats for all non-best quiet moves
         for (int i = 0; i < quietCount; ++i)
