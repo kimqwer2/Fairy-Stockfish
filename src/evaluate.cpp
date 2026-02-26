@@ -218,6 +218,24 @@ namespace {
   // Threshold for lazy and space evaluation
   constexpr Value LazyThreshold1    =  Value(1565);
   constexpr Value LazyThreshold2    =  Value(1102);
+
+  int janggi_material_diff(const Position& pos) {
+    return  13 * (pos.count(WHITE, ROOK)            - pos.count(BLACK, ROOK))
+          +  7 * (pos.count(WHITE, JANGGI_CANNON)   - pos.count(BLACK, JANGGI_CANNON))
+          +  5 * (pos.count(WHITE, HORSE)           - pos.count(BLACK, HORSE))
+          +  3 * (pos.count(WHITE, JANGGI_ELEPHANT) - pos.count(BLACK, JANGGI_ELEPHANT))
+          +  3 * (pos.count(WHITE, WAZIR)           - pos.count(BLACK, WAZIR))
+          +  2 * (pos.count(WHITE, SOLDIER)         - pos.count(BLACK, SOLDIER));
+  }
+
+  int janggi_non_pawn_material(const Position& pos) {
+    return  13 * pos.count<ROOK>()
+          +  7 * pos.count<JANGGI_CANNON>()
+          +  5 * pos.count<HORSE>()
+          +  3 * pos.count<JANGGI_ELEPHANT>()
+          +  3 * pos.count<WAZIR>();
+  }
+
   constexpr Value SpaceThreshold    =  Value(11551);
 
   // KingAttackWeights[PieceType] contains king attack weights by piece type
@@ -680,6 +698,9 @@ namespace {
 
     // Init the score with king shelter and enemy pawns storm
     Score score = pe->king_safety<Us>(pos);
+
+    // In janggimodern (JANGGI_MATERIAL) without bikjang pressure, king file exposure
+    // should not be over-penalized compared to mating variants.
 
     // Attacked squares defended at most once by our queen or king
     weak =  attackedBy[Them][ALL_PIECES]
@@ -1454,6 +1475,23 @@ namespace {
         sf -= 4 * !pawnsOnBothFlanks;
     }
 
+    if (pos.material_counting() == JANGGI_MATERIAL)
+    {
+        constexpr int JanggiScaleEndgameThreshold = 40;
+        constexpr int JanggiClearLead = 2; // > 1.5 points on 13-7-5-3-3-2 scale
+        int nonPawnMaterial = janggi_non_pawn_material(pos);
+        if (nonPawnMaterial <= JanggiScaleEndgameThreshold)
+        {
+            int diff = janggi_material_diff(pos);
+            int lead = strongSide == WHITE ? diff : -diff;
+            if (lead >= JanggiClearLead)
+            {
+                int boost = 8 + 12 * (JanggiScaleEndgameThreshold - nonPawnMaterial) / JanggiScaleEndgameThreshold;
+                sf = std::min(int(SCALE_FACTOR_MAX), std::max(sf, int(SCALE_FACTOR_NORMAL) + boost));
+            }
+        }
+    }
+
     // Interpolate between the middlegame and (scaled by 'sf') endgame score
     v =  mg * int(me->game_phase())
        + eg * int(PHASE_MIDGAME - me->game_phase()) * ScaleFactor(sf) / SCALE_FACTOR_NORMAL;
@@ -1535,6 +1573,7 @@ namespace {
     score +=  king<   WHITE>() - king<   BLACK>()
             + passed< WHITE>() - passed< BLACK>()
             + variant<WHITE>() - variant<BLACK>();
+
 
     if (lazy_skip(LazyThreshold2) && Options["UCI_Variant"] == "chess")
         goto make_v;

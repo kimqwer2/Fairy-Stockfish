@@ -107,11 +107,30 @@ void MovePicker::score() {
 
   static_assert(Type == CAPTURES || Type == QUIETS || Type == EVASIONS, "Wrong type");
 
+  const bool janggiMaterial = pos.material_counting() == JANGGI_MATERIAL;
+  const int materialLead = janggiMaterial ? (13 * (pos.count(pos.side_to_move(), ROOK)            - pos.count(~pos.side_to_move(), ROOK))
+                                           +  7 * (pos.count(pos.side_to_move(), JANGGI_CANNON)   - pos.count(~pos.side_to_move(), JANGGI_CANNON))
+                                           +  5 * (pos.count(pos.side_to_move(), HORSE)           - pos.count(~pos.side_to_move(), HORSE))
+                                           +  3 * (pos.count(pos.side_to_move(), JANGGI_ELEPHANT) - pos.count(~pos.side_to_move(), JANGGI_ELEPHANT))
+                                           +  3 * (pos.count(pos.side_to_move(), WAZIR)           - pos.count(~pos.side_to_move(), WAZIR))
+                                           +  2 * (pos.count(pos.side_to_move(), SOLDIER)         - pos.count(~pos.side_to_move(), SOLDIER))) : 0;
+  const bool simplifyMode = janggiMaterial && materialLead > 0;
+
   for (auto& m : *this)
       if constexpr (Type == CAPTURES)
+      {
           m.value =  int(PieceValue[MG][pos.piece_on(to_sq(m))]) * 6
                    + (*gateHistory)[pos.side_to_move()][gating_square(m)]
                    + (*captureHistory)[pos.moved_piece(m)][to_sq(m)][type_of(pos.piece_on(to_sq(m)))];
+
+          if (simplifyMode)
+          {
+              PieceType mover = type_of(pos.moved_piece(m));
+              PieceType victim = type_of(pos.piece_on(to_sq(m)));
+              if (mover == victim)
+                  m.value += 80;
+          }
+      }
 
       else if constexpr (Type == QUIETS)
           m.value =      (*mainHistory)[pos.side_to_move()][from_to(m)]
