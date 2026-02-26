@@ -114,7 +114,7 @@ void MovePicker::score() {
                                            +  3 * (pos.count(pos.side_to_move(), JANGGI_ELEPHANT) - pos.count(~pos.side_to_move(), JANGGI_ELEPHANT))
                                            +  3 * (pos.count(pos.side_to_move(), WAZIR)           - pos.count(~pos.side_to_move(), WAZIR))
                                            +  2 * (pos.count(pos.side_to_move(), SOLDIER)         - pos.count(~pos.side_to_move(), SOLDIER))) : 0;
-  const bool simplifyMode = janggiMaterial && materialLead >= 2;
+  const bool simplifyMode = janggiMaterial && materialLead > 0;
 
   for (auto& m : *this)
       if constexpr (Type == CAPTURES)
@@ -128,7 +128,7 @@ void MovePicker::score() {
               PieceType mover = type_of(pos.moved_piece(m));
               PieceType victim = type_of(pos.piece_on(to_sq(m)));
               if (mover == victim)
-                  m.value += 96;
+                  m.value += 80;
           }
       }
 
