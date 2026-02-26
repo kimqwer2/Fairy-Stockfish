@@ -1139,78 +1139,6 @@ moves_loop: // When in check, search starts from here
       // Calculate new depth for this move
       newDepth = depth - 1;
 
-#ifdef LARGEBOARDS
-      bool janggiTacticalExtension = false;
-      if (   !rootNode
-          && depth > 5
-          && pos.variant()->variantTemplate == "janggi"
-          && pos.variant()->materialCounting == JANGGI_MATERIAL)
-      {
-          const Color them = ~us;
-          const Square to = to_sq(move);
-          Bitboard occAfter = pos.pieces();
-          Bitboard usAfter = pos.pieces(us);
-          Bitboard themAfter = pos.pieces(them);
-
-          if (type_of(move) == DROP)
-          {
-              occAfter |= to;
-              usAfter |= to;
-          }
-          else
-          {
-              Square from = from_sq(move);
-              occAfter = (occAfter ^ from) | to;
-              usAfter = (usAfter ^ from) | to;
-          }
-
-          Piece captured = pos.piece_on(to);
-          if (captured != NO_PIECE && color_of(captured) == them)
-              themAfter ^= to;
-
-          // A) Newly created toxic cannon pin against enemy king.
-          if (pos.count<KING>(them))
-          {
-              Square ksq = pos.square<KING>(them);
-              Bitboard cannons = pos.pieces(us, JANGGI_CANNON);
-              if (type_of(movedPiece) == JANGGI_CANNON)
-              {
-                  if (type_of(move) != DROP)
-                      cannons ^= from_sq(move);
-                  cannons |= to;
-              }
-
-              while (cannons && !janggiTacticalExtension)
-              {
-                  Square csq = pop_lsb(cannons);
-                  if (!(line_bb(csq, ksq) & ksq)
-                      && !(rider_attacks_bb<RIDER_CANNON_DIAG>(csq, occAfter) & ksq))
-                      continue;
-
-                  Bitboard blockers = between_bb(csq, ksq) & occAfter;
-                  if (popcount(blockers) == 1 && (blockers & usAfter))
-                      janggiTacticalExtension = true;
-              }
-          }
-
-          // B) Enemy horse/elephant fully trapped (0 mobility) after our move.
-          for (Bitboard b = themAfter & pos.pieces(HORSE); b && !janggiTacticalExtension;)
-          {
-              Square s2 = pop_lsb(b);
-              if (!(attacks_bb(them, HORSE, s2, occAfter) & ~themAfter)
-                  && pos.attackers_to(s2, occAfter, us))
-                  janggiTacticalExtension = true;
-          }
-          for (Bitboard b = themAfter & pos.pieces(JANGGI_ELEPHANT); b && !janggiTacticalExtension;)
-          {
-              Square s2 = pop_lsb(b);
-              if (!(attacks_bb(them, JANGGI_ELEPHANT, s2, occAfter) & ~themAfter)
-                  && pos.attackers_to(s2, occAfter, us))
-                  janggiTacticalExtension = true;
-          }
-      }
-#endif
-
       // Step 13. Pruning at shallow depth (~200 Elo)
       if (  !rootNode
           && (pos.non_pawn_material(us) || pos.count<ALL_PIECES>(us) == pos.count<PAWN>(us))
@@ -1333,10 +1261,6 @@ moves_loop: // When in check, search starts from here
                &&  (ss->inCheck || MoveList<CAPTURES>(pos).size() == 1))
           extension = 1;
 
-#ifdef LARGEBOARDS
-      if (!extension && janggiTacticalExtension)
-          extension = 1;
-#endif
 
       // Add extension to new depth
       newDepth += extension;
