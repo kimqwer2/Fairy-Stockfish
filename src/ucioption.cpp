@@ -44,6 +44,30 @@ namespace PSQT {
 
 namespace UCI {
 
+Value JanggiRookValue[PHASE_NB] = { RookValueMg, RookValueEg };
+Value JanggiCannonValue[PHASE_NB] = { JanggiCannonPieceValueMg, JanggiCannonPieceValueEg };
+Value JanggiHorseValue[PHASE_NB] = { HorseValueMg, HorseValueEg };
+Value JanggiElephantValue[PHASE_NB] = { JanggiElephantValueMg, JanggiElephantValueEg };
+Value JanggiGuardValue[PHASE_NB] = { WazirValueMg, WazirValueEg };
+Value JanggiSoldierValue[PHASE_NB] = { SoldierValueMg, SoldierValueEg };
+
+void UpdateJanggiMaterialValues() {
+    auto update_piece = [](PieceType pt, const Value values[PHASE_NB]) {
+        for (Color c : {WHITE, BLACK}) {
+            const Piece pc = make_piece(c, pt);
+            PieceValue[MG][pc] = values[MG];
+            PieceValue[EG][pc] = values[EG];
+        }
+    };
+
+    update_piece(ROOK, JanggiRookValue);
+    update_piece(JANGGI_CANNON, JanggiCannonValue);
+    update_piece(HORSE, JanggiHorseValue);
+    update_piece(JANGGI_ELEPHANT, JanggiElephantValue);
+    update_piece(WAZIR, JanggiGuardValue);
+    update_piece(SOLDIER, JanggiSoldierValue);
+}
+
 // standard variants of XBoard/WinBoard
 std::set<string> standard_variants = {
     "normal", "nocastle", "fischerandom", "knightmate", "3check", "makruk", "shatranj",
@@ -67,6 +91,33 @@ void on_tb_path(const Option& o) { Tablebases::init(o); }
 void on_use_NNUE(const Option& ) { Eval::NNUE::init(); }
 void on_eval_file(const Option& ) { Eval::NNUE::init(); }
 
+Value janggi_option_or_default(const char* name, Value fallback) {
+    auto it = Options.find(name);
+    return it == Options.end() ? fallback : Value(int(it->second));
+}
+
+void load_janggi_material_options() {
+    JanggiRookValue[MG] = janggi_option_or_default("Janggi_Rook_MG", Value(RookValueMg));
+    JanggiRookValue[EG] = janggi_option_or_default("Janggi_Rook_EG", Value(RookValueEg));
+    JanggiCannonValue[MG] = janggi_option_or_default("Janggi_Cannon_MG", Value(JanggiCannonPieceValueMg));
+    JanggiCannonValue[EG] = janggi_option_or_default("Janggi_Cannon_EG", Value(JanggiCannonPieceValueEg));
+    JanggiHorseValue[MG] = janggi_option_or_default("Janggi_Horse_MG", Value(HorseValueMg));
+    JanggiHorseValue[EG] = janggi_option_or_default("Janggi_Horse_EG", Value(HorseValueEg));
+    JanggiElephantValue[MG] = janggi_option_or_default("Janggi_Elephant_MG", Value(JanggiElephantValueMg));
+    JanggiElephantValue[EG] = janggi_option_or_default("Janggi_Elephant_EG", Value(JanggiElephantValueEg));
+    JanggiGuardValue[MG] = janggi_option_or_default("Janggi_Guard_MG", Value(WazirValueMg));
+    JanggiGuardValue[EG] = janggi_option_or_default("Janggi_Guard_EG", Value(WazirValueEg));
+    JanggiSoldierValue[MG] = janggi_option_or_default("Janggi_Soldier_MG", Value(SoldierValueMg));
+    JanggiSoldierValue[EG] = janggi_option_or_default("Janggi_Soldier_EG", Value(SoldierValueEg));
+
+    UpdateJanggiMaterialValues();
+}
+
+void on_janggi_material_change(const Option&) {
+    load_janggi_material_options();
+    Search::clear();
+}
+
 void on_variant_path(const Option& o) {
     std::stringstream ss((std::string)o);
     std::string path;
@@ -83,6 +134,7 @@ void on_variant_set(const Option &o) {
     const Variant* v = variants.find(o)->second;
     init_variant(v);
     PSQT::init(v);
+    load_janggi_material_options();
 }
 void on_variant_change(const Option &o) {
     // Variant initialization
@@ -209,6 +261,19 @@ void init(OptionsMap& o) {
   o["TsumeMode"]             << Option(false);
   o["VariantPath"]           << Option("<empty>", on_variant_path);
   o["usemillisec"]           << Option(true); // time unit for UCCI
+  o["Janggi_Rook_MG"]        << Option(RookValueMg, 0, 5000, on_janggi_material_change);
+  o["Janggi_Rook_EG"]        << Option(RookValueEg, 0, 5000, on_janggi_material_change);
+  o["Janggi_Cannon_MG"]      << Option(JanggiCannonPieceValueMg, 0, 5000, on_janggi_material_change);
+  o["Janggi_Cannon_EG"]      << Option(JanggiCannonPieceValueEg, 0, 5000, on_janggi_material_change);
+  o["Janggi_Horse_MG"]       << Option(HorseValueMg, 0, 5000, on_janggi_material_change);
+  o["Janggi_Horse_EG"]       << Option(HorseValueEg, 0, 5000, on_janggi_material_change);
+  o["Janggi_Elephant_MG"]    << Option(JanggiElephantValueMg, 0, 5000, on_janggi_material_change);
+  o["Janggi_Elephant_EG"]    << Option(JanggiElephantValueEg, 0, 5000, on_janggi_material_change);
+  o["Janggi_Guard_MG"]       << Option(WazirValueMg, 0, 5000, on_janggi_material_change);
+  o["Janggi_Guard_EG"]       << Option(WazirValueEg, 0, 5000, on_janggi_material_change);
+  o["Janggi_Soldier_MG"]     << Option(SoldierValueMg, 0, 5000, on_janggi_material_change);
+  o["Janggi_Soldier_EG"]     << Option(SoldierValueEg, 0, 5000, on_janggi_material_change);
+  load_janggi_material_options();
 }
 
 

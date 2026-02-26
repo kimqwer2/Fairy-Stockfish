@@ -41,6 +41,16 @@ namespace UCI {
 
 void init_variant(const Variant* v);
 
+// Tunable Janggi material values used to overwrite PieceValue[] at runtime.
+extern Value JanggiRookValue[PHASE_NB];
+extern Value JanggiCannonValue[PHASE_NB];
+extern Value JanggiHorseValue[PHASE_NB];
+extern Value JanggiElephantValue[PHASE_NB];
+extern Value JanggiGuardValue[PHASE_NB];
+extern Value JanggiSoldierValue[PHASE_NB];
+
+void UpdateJanggiMaterialValues();
+
 class Option;
 
 /// Custom comparator because UCI options should be case insensitive
