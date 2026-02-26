@@ -23,6 +23,7 @@
 #include <iostream>
 
 #include "evaluate.h"
+#include "psqt.h"
 #include "misc.h"
 #include "piece.h"
 #include "search.h"
@@ -38,9 +39,6 @@ namespace Stockfish {
 
 UCI::OptionsMap Options; // Global object
 
-namespace PSQT {
-  void init(const Variant* v);
-}
 
 namespace UCI {
 
@@ -67,18 +65,43 @@ void on_tb_path(const Option& o) { Tablebases::init(o); }
 void on_use_NNUE(const Option& ) { Eval::NNUE::init(); }
 void on_eval_file(const Option& ) { Eval::NNUE::init(); }
 
-void on_janggi_rook_mg(const Option& o) { set_janggi_piece_value(MG, ROOK, Value(int(o))); }
-void on_janggi_rook_eg(const Option& o) { set_janggi_piece_value(EG, ROOK, Value(int(o))); }
-void on_janggi_cannon_mg(const Option& o) { set_janggi_piece_value(MG, JANGGI_CANNON, Value(int(o))); }
-void on_janggi_cannon_eg(const Option& o) { set_janggi_piece_value(EG, JANGGI_CANNON, Value(int(o))); }
-void on_janggi_horse_mg(const Option& o) { set_janggi_piece_value(MG, HORSE, Value(int(o))); }
-void on_janggi_horse_eg(const Option& o) { set_janggi_piece_value(EG, HORSE, Value(int(o))); }
-void on_janggi_elephant_mg(const Option& o) { set_janggi_piece_value(MG, JANGGI_ELEPHANT, Value(int(o))); }
-void on_janggi_elephant_eg(const Option& o) { set_janggi_piece_value(EG, JANGGI_ELEPHANT, Value(int(o))); }
-void on_janggi_guard_mg(const Option& o) { set_janggi_piece_value(MG, WAZIR, Value(int(o))); }
-void on_janggi_guard_eg(const Option& o) { set_janggi_piece_value(EG, WAZIR, Value(int(o))); }
-void on_janggi_soldier_mg(const Option& o) { set_janggi_piece_value(MG, SOLDIER, Value(int(o))); }
-void on_janggi_soldier_eg(const Option& o) { set_janggi_piece_value(EG, SOLDIER, Value(int(o))); }
+void apply_janggi_values_from_options() {
+    set_janggi_piece_value(MG, ROOK, Value(int(Options["Janggi_Rook_MG"])));
+    set_janggi_piece_value(EG, ROOK, Value(int(Options["Janggi_Rook_EG"])));
+    set_janggi_piece_value(MG, JANGGI_CANNON, Value(int(Options["Janggi_Cannon_MG"])));
+    set_janggi_piece_value(EG, JANGGI_CANNON, Value(int(Options["Janggi_Cannon_EG"])));
+    set_janggi_piece_value(MG, HORSE, Value(int(Options["Janggi_Horse_MG"])));
+    set_janggi_piece_value(EG, HORSE, Value(int(Options["Janggi_Horse_EG"])));
+    set_janggi_piece_value(MG, JANGGI_ELEPHANT, Value(int(Options["Janggi_Elephant_MG"])));
+    set_janggi_piece_value(EG, JANGGI_ELEPHANT, Value(int(Options["Janggi_Elephant_EG"])));
+    set_janggi_piece_value(MG, WAZIR, Value(int(Options["Janggi_Guard_MG"])));
+    set_janggi_piece_value(EG, WAZIR, Value(int(Options["Janggi_Guard_EG"])));
+    set_janggi_piece_value(MG, SOLDIER, Value(int(Options["Janggi_Soldier_MG"])));
+    set_janggi_piece_value(EG, SOLDIER, Value(int(Options["Janggi_Soldier_EG"])));
+}
+
+void refresh_psqt_for_current_variant() {
+    const Variant* v = variants.find(Options["UCI_Variant"])->second;
+    PSQT::init(v);
+}
+
+void on_janggi_value_change(Phase ph, PieceType pt, const Option& o) {
+    set_janggi_piece_value(ph, pt, Value(int(o)));
+    refresh_psqt_for_current_variant();
+}
+
+void on_janggi_rook_mg(const Option& o) { on_janggi_value_change(MG, ROOK, o); }
+void on_janggi_rook_eg(const Option& o) { on_janggi_value_change(EG, ROOK, o); }
+void on_janggi_cannon_mg(const Option& o) { on_janggi_value_change(MG, JANGGI_CANNON, o); }
+void on_janggi_cannon_eg(const Option& o) { on_janggi_value_change(EG, JANGGI_CANNON, o); }
+void on_janggi_horse_mg(const Option& o) { on_janggi_value_change(MG, HORSE, o); }
+void on_janggi_horse_eg(const Option& o) { on_janggi_value_change(EG, HORSE, o); }
+void on_janggi_elephant_mg(const Option& o) { on_janggi_value_change(MG, JANGGI_ELEPHANT, o); }
+void on_janggi_elephant_eg(const Option& o) { on_janggi_value_change(EG, JANGGI_ELEPHANT, o); }
+void on_janggi_guard_mg(const Option& o) { on_janggi_value_change(MG, WAZIR, o); }
+void on_janggi_guard_eg(const Option& o) { on_janggi_value_change(EG, WAZIR, o); }
+void on_janggi_soldier_mg(const Option& o) { on_janggi_value_change(MG, SOLDIER, o); }
+void on_janggi_soldier_eg(const Option& o) { on_janggi_value_change(EG, SOLDIER, o); }
 
 void on_variant_path(const Option& o) {
     std::stringstream ss((std::string)o);
@@ -95,21 +118,10 @@ void on_variant_set(const Option &o) {
 
     const Variant* v = variants.find(o)->second;
     init_variant(v);
-    PSQT::init(v);
 
-    // Re-apply dynamic Janggi material options after PSQT re-initialization.
-    set_janggi_piece_value(MG, ROOK, Value(int(Options["Janggi_Rook_MG"])));
-    set_janggi_piece_value(EG, ROOK, Value(int(Options["Janggi_Rook_EG"])));
-    set_janggi_piece_value(MG, JANGGI_CANNON, Value(int(Options["Janggi_Cannon_MG"])));
-    set_janggi_piece_value(EG, JANGGI_CANNON, Value(int(Options["Janggi_Cannon_EG"])));
-    set_janggi_piece_value(MG, HORSE, Value(int(Options["Janggi_Horse_MG"])));
-    set_janggi_piece_value(EG, HORSE, Value(int(Options["Janggi_Horse_EG"])));
-    set_janggi_piece_value(MG, JANGGI_ELEPHANT, Value(int(Options["Janggi_Elephant_MG"])));
-    set_janggi_piece_value(EG, JANGGI_ELEPHANT, Value(int(Options["Janggi_Elephant_EG"])));
-    set_janggi_piece_value(MG, WAZIR, Value(int(Options["Janggi_Guard_MG"])));
-    set_janggi_piece_value(EG, WAZIR, Value(int(Options["Janggi_Guard_EG"])));
-    set_janggi_piece_value(MG, SOLDIER, Value(int(Options["Janggi_Soldier_MG"])));
-    set_janggi_piece_value(EG, SOLDIER, Value(int(Options["Janggi_Soldier_EG"])));
+    // Re-apply dynamic Janggi values before rebuilding PSQT tables.
+    apply_janggi_values_from_options();
+    PSQT::init(v);
 }
 void on_variant_change(const Option &o) {
     // Variant initialization
