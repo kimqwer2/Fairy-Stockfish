@@ -1186,139 +1186,70 @@ namespace {
 
     Score score = SCORE_ZERO;
 
-    // Janggi modern: emphasize mechanics that NNUE underestimates from pure geometry.
+    // Janggi modern: keep only very cheap tactical terms that NNUE can miss.
     if (   pos.variant()->variantTemplate == "janggi"
-        && !pos.variant()->bikjangRule
         && pos.variant()->materialCounting == JANGGI_MATERIAL)
     {
 #ifdef LARGEBOARDS
         const Bitboard occupied = pos.pieces();
 
-        // 1) Myouk (blockable path) dynamics for horses and elephants.
-        auto myouk_delta = [&](Color c, PieceType pt, Bitboard removed) {
-            int mobilityDelta = 0;
-            for (Bitboard b = pos.pieces(c, pt); b;)
+        // 1) Absolute trapped lame leapers (Myouk): no legal reach and under attack.
+        auto trapped_myouk = [&](Color c) {
+            const Color them = ~c;
+            int t = 0;
+            for (Bitboard b = pos.pieces(c, HORSE); b;)
             {
                 Square s = pop_lsb(b);
-                Bitboard base = attacks_bb(c, pt, s, occupied) & pos.board_bb();
-                Bitboard free = attacks_bb(c, pt, s, occupied & ~removed) & pos.board_bb();
-                mobilityDelta += popcount(free & ~base);
+                if (!(attacks_bb(c, HORSE, s, occupied) & ~pos.pieces(c))
+                    && (pos.attackers_to(s, occupied, them) & ~pos.pieces(them, KING)))
+                    t++;
             }
-            return mobilityDelta;
-        };
-
-        const int myoukPinnedEnemy = myouk_delta(Them, HORSE, pos.pieces(Us))
-                                   + myouk_delta(Them, JANGGI_ELEPHANT, pos.pieces(Us));
-        const int myoukBlockedUs   = myouk_delta(Us, HORSE, pos.pieces(Them))
-                                   + myouk_delta(Us, JANGGI_ELEPHANT, pos.pieces(Them));
-        score += make_score(28, 36) * myoukPinnedEnemy;
-        score -= make_score(24, 30) * myoukBlockedUs;
-
-        // 2) Cannon bridge stability: identify critical screens and whether they are durable.
-        auto stable_screen_bonus = [&](Piece screen, Square s) {
-            PieceType pt = type_of(screen);
-            if (pt == WAZIR && (pos.variant()->mobilityRegion[color_of(screen)][KING] & s))
-                return 24;
-            if (pt == ROOK)
-                return 12;
-            if (pt == HORSE)
-                return 9;
-            if (pt == JANGGI_ELEPHANT)
-                return 7;
-            if (pt == SOLDIER || pt == PAWN)
-                return 4;
-            return 2;
-        };
-
-        auto cannon_bridge_term = [&](Color c) {
-            int bridgeScore = 0;
-            Color them = ~c;
-            Bitboard cannons = pos.pieces(c, JANGGI_CANNON);
-            while (cannons)
+            for (Bitboard b = pos.pieces(c, JANGGI_ELEPHANT); b;)
             {
-                Square csq = pop_lsb(cannons);
-                Bitboard attacks = attacks_bb(c, JANGGI_CANNON, csq, occupied) & pos.board_bb();
-                if (!attacks)
+                Square s = pop_lsb(b);
+                if (!(attacks_bb(c, JANGGI_ELEPHANT, s, occupied) & ~pos.pieces(c))
+                    && (pos.attackers_to(s, occupied, them) & ~pos.pieces(them, KING)))
+                    t++;
+            }
+            return t;
+        };
+
+        score += make_score(10, 14) * trapped_myouk(Them);
+        score -= make_score(10, 14) * trapped_myouk(Us);
+
+        // 2) Toxic cannon screens pinned to king: enemy cannon -> single screen -> our king.
+        auto cannon_screen_pin = [&](Color c) {
+            const Color them = ~c;
+            if (!pos.count<KING>(c))
+                return 0;
+
+            int pin = 0;
+            Square ksq = pos.square<KING>(c);
+            Bitboard theirCannons = pos.pieces(them, JANGGI_CANNON);
+
+            while (theirCannons)
+            {
+                Square csq = pop_lsb(theirCannons);
+                Bitboard between = between_bb(csq, ksq);
+
+                // Orthogonal cannon line or palace-diagonal cannon line.
+                if (!(line_bb(csq, ksq) & ksq)
+                    && !(rider_attacks_bb<RIDER_CANNON_DIAG>(csq, occupied) & ksq))
                     continue;
 
-                // Screens that actually enable current cannon activity.
-                Bitboard relevant = 0;
-                for (Bitboard blockers = attacks_bb<ROOK>(csq, occupied) & occupied; blockers;)
+                Bitboard blockers = between & occupied;
+                if (popcount(blockers) == 1 && (blockers & pos.pieces(c)))
                 {
-                    Square s = pop_lsb(blockers);
-                    if (line_bb(csq, s) & attacks)
-                        relevant |= s;
-                }
-                // Palace diagonal cannon lines in janggi.
-                for (Bitboard blockers = rider_attacks_bb<RIDER_CANNON_DIAG>(csq, occupied) & occupied; blockers;)
-                {
-                    Square s = pop_lsb(blockers);
-                    if (line_bb(csq, s) & attacks)
-                        relevant |= s;
-                }
-
-                while (relevant)
-                {
-                    Square ssq = pop_lsb(relevant);
-                    Piece screen = pos.piece_on(ssq);
-                    int defenders = popcount(pos.attackers_to(ssq, occupied, c));
-                    int attackers = popcount(pos.attackers_to(ssq, occupied, them));
-
-                    if (color_of(screen) == c)
-                    {
-                        bridgeScore += stable_screen_bonus(screen, ssq);
-                        bridgeScore += 3 * std::max(defenders - attackers, 0);
-
-                        PieceType mpt = type_of(screen);
-                        if (mpt != NO_PIECE_TYPE)
-                        {
-                            Bitboard flight = attacks_bb(c, mpt, ssq, occupied) & ~occupied & pos.board_bb();
-                            if (attackers > defenders && popcount(flight) >= 2)
-                                bridgeScore -= 10;
-                        }
-                    }
-                    else
-                    {
-                        // Enemy-owned bridge can disappear on tempo; avoid overestimating cannon scope.
-                        bridgeScore -= 6;
-                    }
+                    Square ssq = lsb(blockers);
+                    pin += 1 + (popcount(pos.attackers_to(ssq, occupied, them))
+                              > popcount(pos.attackers_to(ssq, occupied, c)));
                 }
             }
-            return bridgeScore;
+            return pin;
         };
 
-        score += make_score(8, 14) * cannon_bridge_term(Us);
-        score -= make_score(8, 14) * cannon_bridge_term(Them);
-
-        // 3) Palace defensive geometry (Myeon-po style).
-        const Bitboard WhitePalace = make_bitboard(SQ_D1, SQ_E1, SQ_F1, SQ_D2, SQ_E2, SQ_F2, SQ_D3, SQ_E3, SQ_F3);
-        const Bitboard BlackPalace = make_bitboard(SQ_D8, SQ_E8, SQ_F8, SQ_D9, SQ_E9, SQ_F9, SQ_D10, SQ_E10, SQ_F10);
-
-        auto palace_geometry = [&](Color c) {
-            Bitboard palace = c == WHITE ? WhitePalace : BlackPalace;
-            Square g1 = c == WHITE ? SQ_D1 : SQ_D10;
-            Square g2 = c == WHITE ? SQ_F1 : SQ_F10;
-            Square cp = c == WHITE ? SQ_E2 : SQ_E9;
-
-            int s = 0;
-            if (pos.piece_on(g1) == make_piece(c, WAZIR) && pos.piece_on(g2) == make_piece(c, WAZIR))
-                s += 20;
-            if (pos.piece_on(cp) == make_piece(c, JANGGI_CANNON))
-                s += 28;
-            if (pos.piece_on(cp) == make_piece(c, JANGGI_CANNON)
-                && pos.piece_on(g1) == make_piece(c, WAZIR)
-                && pos.piece_on(g2) == make_piece(c, WAZIR))
-                s += 26;
-
-            int enemyRookPressure = popcount(attackedBy[~c][ROOK] & palace);
-            int enemyHorsePressure = popcount(attackedBy[~c][HORSE] & palace);
-            s -= 8 * enemyRookPressure + 4 * enemyHorsePressure;
-
-            return s;
-        };
-
-        score += make_score(10, 18) * palace_geometry(Us);
-        score -= make_score(10, 18) * palace_geometry(Them);
+        score -= make_score(12, 20) * cannon_screen_pin(Us);
+        score += make_score(12, 20) * cannon_screen_pin(Them);
 #endif
     }
 
