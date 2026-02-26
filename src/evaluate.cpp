@@ -218,6 +218,41 @@ namespace {
   // Threshold for lazy and space evaluation
   constexpr Value LazyThreshold1    =  Value(1565);
   constexpr Value LazyThreshold2    =  Value(1102);
+
+  constexpr int JanggiModernMaxSimplifiableMaterial = 2 * (13 + 13 + 7 + 7 + 5 + 5 + 3 + 3 + 3 + 3);
+
+  int janggi_material_diff(const Position& pos) {
+    return  13 * (pos.count(WHITE, ROOK)            - pos.count(BLACK, ROOK))
+          +  7 * (pos.count(WHITE, JANGGI_CANNON)   - pos.count(BLACK, JANGGI_CANNON))
+          +  5 * (pos.count(WHITE, HORSE)           - pos.count(BLACK, HORSE))
+          +  3 * (pos.count(WHITE, JANGGI_ELEPHANT) - pos.count(BLACK, JANGGI_ELEPHANT))
+          +  3 * (pos.count(WHITE, WAZIR)           - pos.count(BLACK, WAZIR))
+          +  2 * (pos.count(WHITE, SOLDIER)         - pos.count(BLACK, SOLDIER));
+  }
+
+  int janggi_non_pawn_material(const Position& pos) {
+    return  13 * pos.count<ROOK>()
+          +  7 * pos.count<JANGGI_CANNON>()
+          +  5 * pos.count<HORSE>()
+          +  3 * pos.count<JANGGI_ELEPHANT>()
+          +  3 * pos.count<WAZIR>();
+  }
+
+  Score janggi_modern_simplification_score(const Position& pos) {
+
+    if (pos.material_counting() != JANGGI_MATERIAL)
+        return SCORE_ZERO;
+
+    int diff = janggi_material_diff(pos);
+    if (!diff)
+        return SCORE_ZERO;
+
+    int simplification = std::clamp(JanggiModernMaxSimplifiableMaterial - janggi_non_pawn_material(pos), 0,
+                                    JanggiModernMaxSimplifiableMaterial);
+    int scaled = diff * simplification / 6;
+
+    return make_score(scaled / 2, scaled);
+  }
   constexpr Value SpaceThreshold    =  Value(11551);
 
   // KingAttackWeights[PieceType] contains king attack weights by piece type
@@ -681,6 +716,10 @@ namespace {
     // Init the score with king shelter and enemy pawns storm
     Score score = pe->king_safety<Us>(pos);
 
+    // In janggimodern (JANGGI_MATERIAL) without bikjang pressure, king file exposure
+    // should not be over-penalized compared to mating variants.
+    bool janggiMaterial = pos.material_counting() == JANGGI_MATERIAL;
+
     // Attacked squares defended at most once by our queen or king
     weak =  attackedBy[Them][ALL_PIECES]
           & ~attackedBy2[Us]
@@ -809,11 +848,18 @@ namespace {
         score -= make_score(std::min(kingDanger, 3500) * kingDanger / 4096, kingDanger / 16);
 
     // Penalty when our king is on a pawnless flank
-    if (!(pos.pieces(PAWN) & kingFlank))
+    if (!(pos.pieces(PAWN) & kingFlank) && !janggiMaterial)
         score -= PawnlessFlank;
 
     // Penalty if king flank is under attack, potentially moving toward the king
-    score -= FlankAttacks * kingFlankAttack * (1 + 5 * pos.captures_to_hand() + pos.check_counting());
+    score -= FlankAttacks * kingFlankAttack * (1 + 5 * pos.captures_to_hand() + pos.check_counting()) / (janggiMaterial ? 2 : 1);
+
+    if (janggiMaterial)
+    {
+        Bitboard defended = attackedBy[Us][KING] & attackedBy[Us][ALL_PIECES] & pos.pieces(Us) & ~pos.pieces(Us, KING);
+        int defendedCount = popcount(defended);
+        score += make_score(4 * defendedCount, 16 * defendedCount);
+    }
 
     if (pos.check_counting())
         score += make_score(0, mg_value(score) * 2 / (2 + pos.checks_remaining(Them)));
@@ -1535,6 +1581,8 @@ namespace {
     score +=  king<   WHITE>() - king<   BLACK>()
             + passed< WHITE>() - passed< BLACK>()
             + variant<WHITE>() - variant<BLACK>();
+
+    score += janggi_modern_simplification_score(pos);
 
     if (lazy_skip(LazyThreshold2) && Options["UCI_Variant"] == "chess")
         goto make_v;
