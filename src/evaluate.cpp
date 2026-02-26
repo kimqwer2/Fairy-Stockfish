@@ -1186,6 +1186,35 @@ namespace {
 
     Score score = SCORE_ZERO;
 
+    // Janggi modern: lightweight activity + palace crowding terms to complement NNUE.
+    if (   pos.variant()->variantTemplate == "janggi"
+        && pos.variant()->materialCounting == JANGGI_MATERIAL)
+    {
+#ifdef LARGEBOARDS
+        const Bitboard occupied = pos.pieces();
+        const Bitboard freeOrEnemy = ~pos.pieces(Us) & pos.board_bb();
+
+        int horseMobility = 0;
+        for (Bitboard b = pos.pieces(Us, HORSE); b;)
+            horseMobility += popcount(attacks_bb(Us, HORSE, pop_lsb(b), occupied) & freeOrEnemy);
+
+        int cannonMobility = 0;
+        for (Bitboard b = pos.pieces(Us, JANGGI_CANNON); b;)
+            cannonMobility += popcount(attacks_bb(Us, JANGGI_CANNON, pop_lsb(b), occupied) & freeOrEnemy);
+
+        score += make_score(2, 3) * horseMobility;
+        score += make_score(1, 2) * cannonMobility;
+
+        const Bitboard ownPalace = Us == WHITE
+            ? make_bitboard(SQ_D1, SQ_E1, SQ_F1, SQ_D2, SQ_E2, SQ_F2, SQ_D3, SQ_E3, SQ_F3)
+            : make_bitboard(SQ_D8, SQ_E8, SQ_F8, SQ_D9, SQ_E9, SQ_F9, SQ_D10, SQ_E10, SQ_F10);
+
+        int crowded = popcount(pos.pieces(Us) & ownPalace) - 5;
+        if (crowded > 0)
+            score -= make_score(6, 4) * crowded;
+#endif
+    }
+
     // Capture the flag
     if (pos.flag_region(Us))
     {
