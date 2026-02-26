@@ -61,6 +61,31 @@ namespace Stockfish {
 
 const Variant* currentNnueVariant;
 
+namespace {
+
+const Value DefaultJanggiPieceValue[PHASE_NB][6] = {
+  { RookValueMg, JanggiCannonPieceValueMg, HorseValueMg, JanggiElephantValueMg, WazirValueMg, SoldierValueMg },
+  { RookValueEg, JanggiCannonPieceValueEg, HorseValueEg, JanggiElephantValueEg, WazirValueEg, SoldierValueEg },
+};
+
+PieceType janggi_piece_type_from_index(int idx) {
+    constexpr PieceType PieceByIndex[6] = { ROOK, JANGGI_CANNON, HORSE, JANGGI_ELEPHANT, WAZIR, SOLDIER };
+    return PieceByIndex[idx];
+}
+
+void set_piece_value_arrays(Phase ph, PieceType pt, Value value) {
+    PieceValue[ph][pt] = value;
+    PieceValue[ph][make_piece(WHITE, pt)] = value;
+    PieceValue[ph][make_piece(BLACK, pt)] = value;
+
+    EvalPieceValue[ph][make_piece(WHITE, pt)] = value;
+    EvalPieceValue[ph][make_piece(BLACK, pt)] = value;
+
+    CapturePieceValue[ph][make_piece(WHITE, pt)] = value;
+    CapturePieceValue[ph][make_piece(BLACK, pt)] = value;
+}
+}
+
 namespace Eval {
 
   bool useNNUE;
@@ -170,6 +195,23 @@ namespace Eval {
             sync_cout << "info string classical evaluation enabled" << sync_endl;
     }
   }
+}
+
+
+void set_janggi_piece_value(Phase ph, PieceType pt, Value value) {
+    if (ph >= PHASE_NB || ph < MG)
+        return;
+
+    if (pt != ROOK && pt != JANGGI_CANNON && pt != HORSE && pt != JANGGI_ELEPHANT && pt != WAZIR && pt != SOLDIER)
+        return;
+
+    set_piece_value_arrays(ph, pt, value);
+}
+
+void reset_janggi_piece_values() {
+    for (int ph = MG; ph <= EG; ++ph)
+        for (int idx = 0; idx < 6; ++idx)
+            set_piece_value_arrays(Phase(ph), janggi_piece_type_from_index(idx), DefaultJanggiPieceValue[ph][idx]);
 }
 
 namespace Trace {
@@ -1607,6 +1649,30 @@ make_v:
 
 Value Eval::evaluate(const Position& pos) {
 
+  if (   pos.material_counting() == JANGGI_MATERIAL
+      || Options["UCI_Variant"] == "janggi"
+      || Options["UCI_Variant"] == "janggimodern")
+  {
+      int score = 0;
+
+      constexpr PieceType TunedJanggiPieces[] = {
+          ROOK,
+          JANGGI_CANNON,
+          HORSE,
+          JANGGI_ELEPHANT,
+          WAZIR,
+          SOLDIER
+      };
+
+      for (PieceType pt : TunedJanggiPieces)
+          score += int(PieceValue[MG][pt]) * (pos.count(WHITE, pt) - pos.count(BLACK, pt));
+
+      // Han (black) receives 1.5 point komi.
+      score -= 150;
+
+      return pos.side_to_move() == WHITE ? Value(score) : Value(-score);
+  }
+
   Value v;
 
   if (!Eval::useNNUE || !pos.nnue_applicable())
@@ -1614,7 +1680,7 @@ Value Eval::evaluate(const Position& pos) {
   else
   {
       // Scale and shift NNUE for compatibility with search and classical evaluation
-      auto  adjusted_NNUE = [&]()
+      auto adjusted_NNUE = [&]()
       {
          int scale =   903
                      + 32 * pos.count<PAWN>()
