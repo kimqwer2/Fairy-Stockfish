@@ -1,28 +1,61 @@
-#!/usr/bin/env python3
 import argparse
 import random
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict
 
 import optuna
 
-PIECE_SCORES = {
-    "r": 13.0,
-    "c": 7.0,
-    "n": 5.0,
-    "b": 3.0,
-    "a": 3.0,
-    "p": 2.0,
+# 장기 점수 판정용 기물 가치
+PIECE_SCORES = {"r": 13.0, "c": 7.0, "n": 5.0, "m": 5.0, "b": 3.0, "e": 3.0, "a": 3.0, "p": 2.0, "s": 2.0}
+
+# 고정 기준값: check.py / DB 호환을 위해 키 이름 유지
+BASELINE_MATERIAL_PARAMS = {
+    "Janggi_Rook_MG": 1276,
+    "Janggi_Rook_EG": 1380,
+    "Janggi_Cannon_MG": 800,
+    "Janggi_Cannon_EG": 600,
+    "Janggi_Horse_MG": 520,
+    "Janggi_Horse_EG": 800,
+    "Janggi_Elephant_MG": 340,
+    "Janggi_Elephant_EG": 350,
+    "Janggi_Guard_MG": 400,
+    "Janggi_Guard_EG": 350,
+    "Janggi_Soldier_MG": 200,
+    "Janggi_Soldier_EG": 270,
+}
+
+# Search 모드에서 고정 적용할 "최종 최적화" Material 값
+FIXED_OPTIMIZED_MATERIAL_PARAMS = {
+    "Janggi_Rook_MG": 1295,
+    "Janggi_Rook_EG": 1500,
+    "Janggi_Cannon_MG": 795,
+    "Janggi_Cannon_EG": 605,
+    "Janggi_Horse_MG": 495,
+    "Janggi_Horse_EG": 825,
+    "Janggi_Elephant_MG": 365,
+    "Janggi_Elephant_EG": 335,
+    "Janggi_Guard_MG": 345,
+    "Janggi_Guard_EG": 335,
+    "Janggi_Soldier_MG": 195,
+    "Janggi_Soldier_EG": 275,
+}
+
+# Material 모드에서 고정 적용할 Search 기본값
+BASELINE_SEARCH_PARAMS = {
+    "LMR_Base": 520,
+    "LMR_Div": 100,
+    "Futility_Margin": 200,
 }
 
 
 class UCIEngine:
-    def __init__(self, engine_path: str, nnue_file: str, threads: int, variant: str = "janggimodern"):
-        self.variant = variant
+    def __init__(self, engine_path, nnue_file, threads, variant="janggimodern"):
+        self.engine_path = engine_path
         self.nnue_file = nnue_file
         self.threads = threads
+        self.variant = variant
+
         self.process = subprocess.Popen(
             [engine_path],
             stdin=subprocess.PIPE,
@@ -33,237 +66,178 @@ class UCIEngine:
             universal_newlines=True,
         )
 
-    def _send(self, command: str) -> None:
-        if self.process.stdin is None:
-            raise RuntimeError("Engine stdin is not available")
-        self.process.stdin.write(command + "\n")
-        self.process.stdin.flush()
-
-    def _read_until(self, token_prefix: str) -> List[str]:
-        if self.process.stdout is None:
-            raise RuntimeError("Engine stdout is not available")
-        lines: List[str] = []
-        while True:
-            line = self.process.stdout.readline()
-            if line == "":
-                raise RuntimeError(f"Engine terminated while waiting for '{token_prefix}'")
-            line = line.strip()
-            lines.append(line)
-            if line.startswith(token_prefix):
-                return lines
-
-    def _setoption(self, name: str, value: str, wait_ready: bool = True) -> None:
-        self._send(f"setoption name {name} value {value}")
-        if wait_ready:
-            self._send("isready")
-            self._read_until("readyok")
-
-    def initialize(self) -> None:
         self._send("uci")
         self._read_until("uciok")
-        self._setoption("Threads", str(self.threads))
-        self._setoption("UCI_Variant", self.variant)
-        self._setoption("Use NNUE", "true")
-        self._setoption("EvalFile", self.nnue_file)
+        self._send(f"setoption name Threads value {self.threads}")
+        self._send(f"setoption name UCI_Variant value {self.variant}")
+        self._send("setoption name Use NNUE value true")
+        self._send(f"setoption name EvalFile value {self.nnue_file}")
+        self._send("isready")
+        self._read_until("readyok")
 
-    def set_options(self, options: Dict[str, int]) -> None:
+    def _send(self, command):
+        if self.process.stdin:
+            self.process.stdin.write(command + "\n")
+            self.process.stdin.flush()
+
+    def _read_until(self, token):
+        lines = []
+        while True:
+            line = self.process.stdout.readline()
+            if not line:
+                raise RuntimeError("Engine died unexpectedly")
+            line = line.strip()
+            lines.append(line)
+            if line.startswith(token):
+                return lines
+
+    def set_options(self, options):
+        """옵션 설정은 한 번만 수행"""
         for name, value in options.items():
-            self._setoption(name, str(value), wait_ready=False)
+            self._send(f"setoption name {name} value {str(value)}")
+        # C++ deep-override 경로를 확실히 타도록 강제
+        self.new_game()
+
+    def new_game(self):
+        """매 게임마다 옵션을 다시 보내지 않고 게임 초기화만 수행"""
         self._send("ucinewgame")
         self._send("isready")
         self._read_until("readyok")
 
-    def bestmove(self, start_fen: str, moves: List[str], nodes: int) -> str:
+    def bestmove(self, start_fen, moves, nodes):
         cmd = f"position fen {start_fen}"
         if moves:
             cmd += " moves " + " ".join(moves)
+
         self._send(cmd)
         self._send(f"go nodes {nodes}")
+
         lines = self._read_until("bestmove")
-        parts = lines[-1].split()
-        if len(parts) < 2:
-            raise RuntimeError(f"Malformed bestmove line: {lines[-1]}")
-        return parts[1]
+        return lines[-1].split()[1]
 
-    def quit(self) -> None:
-        if self.process.poll() is None:
-            try:
-                self._send("quit")
-            except Exception:
-                pass
-            try:
-                self.process.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-
-
-@dataclass
-class GameResult:
-    score_for_a: float
-    reason: str
+    def quit(self):
+        try:
+            self._send("quit")
+            self.process.wait(timeout=2)
+        except Exception:
+            self.process.kill()
 
 
 class JanggiMatchManager:
-    def __init__(self, engine_path: str, nnue_file: str, threads: int, nodes: int, max_plies: int, fen_book: List[str], rng: random.Random):
-        self.engine_path = engine_path
-        self.nnue_file = nnue_file
-        self.threads = threads
+    def __init__(self, nodes, max_plies, fen_book):
         self.nodes = nodes
         self.max_plies = max_plies
         self.fen_book = fen_book
-        self.rng = rng
 
-    @staticmethod
-    def normalize_fen(raw_line: str) -> Optional[str]:
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            return None
-        if ";" in line:
-            line = line.split(";", 1)[0].strip()
-            if not line:
-                return None
-        fields = line.split()
-        if len(fields) >= 6:
-            return " ".join(fields[:6])
-        if len(fields) == 4:
-            return " ".join(fields + ["0", "1"])
-        return None
+    def play_game(self, engine_a, engine_b, start_fen, a_is_cho):
+        moves = []
+        board = self.board_from_fen(start_fen)
 
-    @classmethod
-    def load_book(cls, book_path: str) -> List[str]:
-        path = Path(book_path)
-        if not path.exists():
-            raise FileNotFoundError(f"Book file not found: {book_path}")
-        fens = [fen for fen in (cls.normalize_fen(line) for line in path.read_text(encoding="utf-8").splitlines()) if fen]
-        if not fens:
-            raise ValueError(f"No valid FEN entries found in {book_path}")
-        return fens
+        for ply in range(self.max_plies):
+            a_to_move = (ply % 2 == 0) == a_is_cho
+            engine = engine_a if a_to_move else engine_b
+            mv = engine.bestmove(start_fen, moves, self.nodes)
 
-    @staticmethod
-    def board_from_fen(fen: str) -> Dict[str, str]:
-        board: Dict[str, str] = {}
+            if mv in ("(none)", "0000"):
+                return 0.0 if a_to_move else 1.0
+
+            moves.append(mv)
+            src, dst = mv[:2], mv[2:4]
+
+            if src in board:
+                board[dst] = board.pop(src)
+
+        cho_s, han_s = self.calculate_score(board)
+        return 1.0 if (cho_s > han_s if a_is_cho else han_s > cho_s) else 0.0
+
+    def board_from_fen(self, fen):
+        board = {}
         ranks = fen.split()[0].split("/")
-        for ridx, rank_data in enumerate(ranks):
+        for ridx, rdata in enumerate(ranks):
             file_idx = 0
-            rank_no = len(ranks) - ridx
-            for ch in rank_data:
+            rno = len(ranks) - ridx
+            for ch in rdata:
                 if ch.isdigit():
                     file_idx += int(ch)
                 else:
-                    sq = f"{chr(ord('a') + file_idx)}{rank_no}"
-                    board[sq] = ch
+                    board[f"{chr(ord('a') + file_idx)}{rno}"] = ch
                     file_idx += 1
         return board
 
-    @staticmethod
-    def score_material(fen: str) -> float:
-        board = JanggiMatchManager.board_from_fen(fen)
-        score = 0.0
+    def calculate_score(self, board):
+        cho = 0.0
+        han = 1.5
         for p in board.values():
-            w = PIECE_SCORES.get(p.lower(), 0.0)
-            score += w if p.isupper() else -w
-        return score
-
-    def adjudicate(self, fen: str) -> Optional[GameResult]:
-        m = self.score_material(fen)
-        if m > 18:
-            return GameResult(1.0, "material")
-        if m < -18:
-            return GameResult(0.0, "material")
-        return None
-
-    def play_game(self, params_a: Dict[str, int], params_b: Dict[str, int], start_fen: str) -> GameResult:
-        a = UCIEngine(self.engine_path, self.nnue_file, self.threads, variant="janggimodern")
-        b = UCIEngine(self.engine_path, self.nnue_file, self.threads, variant="janggimodern")
-        try:
-            a.initialize()
-            b.initialize()
-            a.set_options(params_a)
-            b.set_options(params_b)
-
-            moves: List[str] = []
-            side_a_white = True
-            for ply in range(self.max_plies):
-                eng = a if (ply % 2 == 0) == side_a_white else b
-                mv = eng.bestmove(start_fen, moves, self.nodes)
-                if mv in ("(none)", "0000"):
-                    side_to_move_a = (ply % 2 == 0) == side_a_white
-                    return GameResult(0.0 if side_to_move_a else 1.0, "terminal")
-                moves.append(mv)
-
-            return GameResult(0.5, "max_plies")
-        finally:
-            a.quit()
-            b.quit()
-
-    def play_symmetric_pair(self, params_a: Dict[str, int], params_b: Dict[str, int]) -> float:
-        fen = self.rng.choice(self.fen_book)
-        g1 = self.play_game(params_a, params_b, fen)
-        g2 = self.play_game(params_b, params_a, fen)
-        # g2 score is from B perspective when swapped, convert to A perspective
-        return (g1.score_for_a + (1.0 - g2.score_for_a)) / 2.0
+            v = PIECE_SCORES.get(p.lower(), 0.0)
+            if p.isupper():
+                cho += v
+            else:
+                han += v
+        return cho, han
 
 
-def suggest_params(trial: optuna.Trial) -> Dict[str, int]:
+def suggest_material_params(trial):
     return {
-        "Janggi_Rook_MG": trial.suggest_int("Janggi_Rook_MG", 200, 2000),
-        "Janggi_Rook_EG": trial.suggest_int("Janggi_Rook_EG", 200, 2200),
-        "Janggi_Cannon_MG": trial.suggest_int("Janggi_Cannon_MG", 100, 1500),
-        "Janggi_Cannon_EG": trial.suggest_int("Janggi_Cannon_EG", 100, 1500),
-        "Janggi_Horse_MG": trial.suggest_int("Janggi_Horse_MG", 100, 1500),
-        "Janggi_Horse_EG": trial.suggest_int("Janggi_Horse_EG", 100, 1800),
-        "Janggi_Elephant_MG": trial.suggest_int("Janggi_Elephant_MG", 50, 1200),
-        "Janggi_Elephant_EG": trial.suggest_int("Janggi_Elephant_EG", 50, 1200),
-        "Janggi_Guard_MG": trial.suggest_int("Janggi_Guard_MG", 50, 1000),
-        "Janggi_Guard_EG": trial.suggest_int("Janggi_Guard_EG", 50, 1000),
-        "Janggi_Soldier_MG": trial.suggest_int("Janggi_Soldier_MG", 20, 600),
-        "Janggi_Soldier_EG": trial.suggest_int("Janggi_Soldier_EG", 20, 700),
+        "Janggi_Rook_MG": trial.suggest_int("Janggi_Rook_MG", 1280, 1310),
+        "Janggi_Rook_EG": trial.suggest_int("Janggi_Rook_EG", 1485, 1515),
+        "Janggi_Cannon_MG": trial.suggest_int("Janggi_Cannon_MG", 785, 805),
+        "Janggi_Cannon_EG": trial.suggest_int("Janggi_Cannon_EG", 595, 615),
+        "Janggi_Horse_MG": trial.suggest_int("Janggi_Horse_MG", 483, 507),
+        "Janggi_Horse_EG": trial.suggest_int("Janggi_Horse_EG", 813, 837),
+        "Janggi_Elephant_MG": trial.suggest_int("Janggi_Elephant_MG", 353, 377),
+        "Janggi_Elephant_EG": trial.suggest_int("Janggi_Elephant_EG", 323, 347),
+        "Janggi_Guard_MG": trial.suggest_int("Janggi_Guard_MG", 335, 355),
+        "Janggi_Guard_EG": trial.suggest_int("Janggi_Guard_EG", 325, 345),
+        "Janggi_Soldier_MG": trial.suggest_int("Janggi_Soldier_MG", 185, 205),
+        "Janggi_Soldier_EG": trial.suggest_int("Janggi_Soldier_EG", 265, 285),
     }
 
 
-def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Optuna tuner for Fairy-Stockfish janggimodern material values")
-    p.add_argument("--engine", default="./src/stockfish")
-    p.add_argument("--nnue-file", default="<empty>")
-    p.add_argument("--book", required=True)
-    p.add_argument("--study", default="janggi_optuna")
-    p.add_argument("--storage", default="sqlite:///janggi_optuna.db")
-    p.add_argument("--trials", type=int, default=100)
-    p.add_argument("--games-per-trial", type=int, default=2)
-    p.add_argument("--nodes", type=int, default=3000)
-    p.add_argument("--threads", type=int, default=1)
-    p.add_argument("--max-plies", type=int, default=200)
-    p.add_argument("--seed", type=int, default=7)
-    return p
-
-
-def main() -> None:
-    args = build_parser().parse_args()
-    rng = random.Random(args.seed)
-    fen_book = JanggiMatchManager.load_book(args.book)
-    manager = JanggiMatchManager(args.engine, args.nnue_file, args.threads, args.nodes, args.max_plies, fen_book, rng)
-
-    baseline = {
-        "Janggi_Rook_MG": 1276,
-        "Janggi_Rook_EG": 1380,
-        "Janggi_Cannon_MG": 800,
-        "Janggi_Cannon_EG": 600,
-        "Janggi_Horse_MG": 520,
-        "Janggi_Horse_EG": 800,
-        "Janggi_Elephant_MG": 340,
-        "Janggi_Elephant_EG": 350,
-        "Janggi_Guard_MG": 400,
-        "Janggi_Guard_EG": 350,
-        "Janggi_Soldier_MG": 200,
-        "Janggi_Soldier_EG": 270,
+def suggest_search_params(trial):
+    return {
+        "LMR_Base": trial.suggest_int("LMR_Base", 400, 700),
+        "LMR_Div": trial.suggest_int("LMR_Div", 80, 120),
+        "Futility_Margin": trial.suggest_int("Futility_Margin", 100, 300),
     }
 
-    def objective(trial: optuna.Trial) -> float:
-        params = suggest_params(trial)
-        score = 0.0
-        for _ in range(args.games_per_trial):
-            score += manager.play_symmetric_pair(params, baseline)
-        return score / args.games_per_trial
+
+def get_combined_params(trial: optuna.Trial, mode: str) -> Dict[str, int]:
+    """
+    mode에 따라 '튜닝 대상' + '고정값'을 합쳐 엔진에 전달할 전체 파라미터를 생성.
+    항상 Material + Search 전체 키를 반환한다.
+    """
+    if mode == "material":
+        tuned = suggest_material_params(trial)
+        combined = {
+            **tuned,
+            **BASELINE_SEARCH_PARAMS,
+        }
+    else:  # mode == "search"
+        tuned = suggest_search_params(trial)
+        combined = {
+            **FIXED_OPTIMIZED_MATERIAL_PARAMS,
+            **tuned,
+        }
+
+    return combined
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--engine", default="stockfishtune.exe")
+    parser.add_argument("--nnue-file", default="janggimodern-17.nnue")
+    parser.add_argument("--book", required=True)
+    parser.add_argument("--study", default="janggi_optuna")
+    parser.add_argument("--storage", default="sqlite:///janggi_optuna.db")
+    parser.add_argument("--trials", type=int, default=10000)
+    parser.add_argument("--games-per-trial", type=int, default=22)
+    parser.add_argument("--nodes", type=int, default=3000)
+    parser.add_argument("--concurrency", type=int, default=6)
+    parser.add_argument("--max-plies", type=int, default=400)
+    parser.add_argument("--mode", choices=["material", "search"], default="material")
+    args = parser.parse_args()
+
+    fens = [l.strip() for l in Path(args.book).read_text(encoding="utf-8").splitlines() if l.strip() and not l.startswith("#")]
 
     study = optuna.create_study(
         direction="maximize",
@@ -271,10 +245,46 @@ def main() -> None:
         storage=args.storage,
         load_if_exists=True,
     )
-    study.optimize(objective, n_trials=args.trials)
 
-    print("best_value:", study.best_value)
-    print("best_params:", study.best_params)
+    def objective(trial):
+        params = get_combined_params(trial, args.mode)
+
+        # 비교군 baseline은 항상 "final optimized material + baseline search"로 고정
+        baseline = {
+            **FIXED_OPTIMIZED_MATERIAL_PARAMS,
+            **BASELINE_SEARCH_PARAMS,
+        }
+
+        # Persistent Engine 구조 유지: Trial 당 엔진 2개를 띄워 모든 게임 재사용
+        ea = UCIEngine(args.engine, args.nnue_file, 1)
+        eb = UCIEngine(args.engine, args.nnue_file, 1)
+
+        try:
+            manager = JanggiMatchManager(args.nodes, args.max_plies, fens)
+            total_score = 0.0
+
+            ea.set_options(params)
+            eb.set_options(baseline)
+
+            for _ in range(args.games_per_trial // 2):
+                fen = random.choice(fens)
+
+                ea.new_game()
+                eb.new_game()
+                total_score += manager.play_game(ea, eb, fen, True)
+
+                ea.new_game()
+                eb.new_game()
+                total_score += (1.0 - manager.play_game(eb, ea, fen, True))
+
+            return total_score / args.games_per_trial
+
+        finally:
+            ea.quit()
+            eb.quit()
+
+    # n_jobs 동시성 유지
+    study.optimize(objective, n_trials=args.trials, n_jobs=args.concurrency)
 
 
 if __name__ == "__main__":
