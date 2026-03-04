@@ -42,6 +42,9 @@ namespace Stockfish {
 namespace Search {
 
   LimitsType Limits;
+  int TuneLMR_Base = 534;
+  int TuneLMR_Div = 1024;
+  int TuneFutility_Margin = 214;
 }
 
 namespace Tablebases {
@@ -68,7 +71,7 @@ namespace {
 
   // Futility margin
   Value futility_margin(Depth d, bool improving) {
-    return Value(214 * (d - improving));
+    return Value(TuneFutility_Margin * (d - improving));
   }
 
   // Reductions lookup table, initialized at startup
@@ -76,7 +79,7 @@ namespace {
 
   Depth reduction(bool i, Depth d, int mn) {
     int r = Reductions[d] * Reductions[mn];
-    return (r + 534) / 1024 + (!i && r > 904);
+    return (r + TuneLMR_Base) / TuneLMR_Div + (!i && r > 904);
   }
 
   int futility_move_count(bool improving, Depth depth, const Position& pos) {
