@@ -143,6 +143,13 @@ void on_tb_path(const Option& o) { Tablebases::init(o); }
 void on_use_NNUE(const Option& ) { Eval::NNUE::init(); }
 void on_eval_file(const Option& ) { Eval::NNUE::init(); }
 
+void on_search_params_change(const Option&) {
+    Search::TuneLMR_Base = int(Options["LMR_Base"]);
+    Search::TuneLMR_Div = std::max(1, int(Options["LMR_Div"]));
+    Search::TuneFutility_Margin = int(Options["Futility_Margin"]);
+    Search::clear();
+}
+
 Value janggi_option_or_default(const char* name, Value fallback) {
     auto it = Options.find(name);
     return it == Options.end() ? fallback : Value(int(it->second));
@@ -313,6 +320,9 @@ void init(OptionsMap& o) {
   o["TsumeMode"]             << Option(false);
   o["VariantPath"]           << Option("<empty>", on_variant_path);
   o["usemillisec"]           << Option(true); // time unit for UCCI
+  o["LMR_Base"]             << Option(534, 0, 2000, on_search_params_change);
+  o["LMR_Div"]              << Option(1024, 1, 2000, on_search_params_change);
+  o["Futility_Margin"]      << Option(214, 0, 1000, on_search_params_change);
   o["Janggi_Rook_MG"]        << Option(RookValueMg, 0, 5000, on_janggi_material_change);
   o["Janggi_Rook_EG"]        << Option(RookValueEg, 0, 5000, on_janggi_material_change);
   o["Janggi_Cannon_MG"]      << Option(JanggiCannonPieceValueMg, 0, 5000, on_janggi_material_change);
