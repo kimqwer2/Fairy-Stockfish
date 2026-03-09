@@ -56,6 +56,12 @@ std::string format_info_brace(double choEls, double hanEls) {
   return std::string(buffer);
 }
 
+std::string format_short_summary(double choEls, double hanEls) {
+  char buffer[48];
+  std::snprintf(buffer, sizeof(buffer), "ELS:C%.1f/H%.1f", choEls, hanEls);
+  return std::string(buffer);
+}
+
 bool is_supported_variant(const std::string& variantName) {
   return variantName == "janggi" || variantName == "janggimodern";
 }
@@ -314,6 +320,12 @@ std::string fjace_debug_string(bool enabled, const std::string& variantName) {
   if (!enabled || !is_supported_variant(variantName))
       return "";
   return format_debug_string(g_choEls, g_hanEls);
+}
+
+std::string fjace_short_summary(bool enabled, const std::string& variantName) {
+  if (!enabled || !is_supported_variant(variantName))
+      return "";
+  return format_short_summary(g_choEls, g_hanEls);
 }
 
 }  // namespace Stockfish

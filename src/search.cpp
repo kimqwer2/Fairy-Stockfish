@@ -2056,15 +2056,16 @@ string UCI::pv(const Position& pos, Depth depth, Value alpha, Value beta) {
           ss << " hashfull " << TT.hashfull();
 
       ss << " tbhits "   << tbHits
-         << " time "     << elapsed
-         << " pv";
+         << " time "     << elapsed;
+
+      const std::string fjaceShort = fjace_short_summary(Options["Enable_Cheat_Detector"], std::string(Options["UCI_Variant"]));
+      if (!fjaceShort.empty())
+          ss << " string " << fjaceShort;
+
+      ss << " pv";
 
       for (Move m : rootMoves[i].pv)
           ss << " " << UCI::move(pos, m);
-
-      const std::string fjaceInfo = fjace_info_string(Options["Enable_Cheat_Detector"], std::string(Options["UCI_Variant"]));
-      if (!fjaceInfo.empty())
-          ss << " " << fjaceInfo;
 
       const std::string fjaceDebug = fjace_debug_string(Options["Enable_Cheat_Detector"], std::string(Options["UCI_Variant"]));
       if (!fjaceDebug.empty())
