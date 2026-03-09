@@ -788,10 +788,17 @@ endif
 
 .PHONY: help build profile-build strip install clean net objclean profileclean \
         config-sanity icc-profile-use icc-profile-make gcc-profile-use gcc-profile-make \
-        clang-profile-use clang-profile-make
+        clang-profile-use clang-profile-make cheat-tools cheat-test
 
 build: $(load_net) config-sanity
 	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) all
+
+cheat-tools:
+	$(CXX) $(CXXFLAGS) -std=c++17 -I. ../tools/cli_analyze.cc $(filter-out main.cpp,$(SRCS)) cheat_detection.cpp -o ../tools/fstockfish-cheat
+
+cheat-test:
+	$(CXX) $(CXXFLAGS) -std=c++17 -I. ../tests/test_cheat_detector.cpp $(filter-out main.cpp,$(SRCS)) cheat_detection.cpp -o ../tests/test_cheat_detector
+	../tests/test_cheat_detector
 
 profile-build: $(load_net) config-sanity objclean profileclean
 	@echo ""
