@@ -79,6 +79,7 @@ void fjace_on_position_command(const Variant* variant,
 void fjace_reset();
 
 std::string fjace_info_string(bool enabled, const std::string& variantName);
+std::string fjace_debug_string(bool enabled, const std::string& variantName);
 
 }  // namespace Stockfish
 

@@ -32,9 +32,15 @@ inline double value_to_cp(Value v) {
 }  // namespace
 
 
-std::string format_info_string(double choEls, double hanEls) {
-  char buffer[96];
-  std::snprintf(buffer, sizeof(buffer), "info string [FJACE] Cho_ELS: %.1f%% | Han_ELS: %.1f%%", choEls, hanEls);
+std::string format_pv_comment(double choEls, double hanEls) {
+  char buffer[64];
+  std::snprintf(buffer, sizeof(buffer), "(Cho:%.1f%% Han:%.1f%%)", choEls, hanEls);
+  return std::string(buffer);
+}
+
+std::string format_debug_string(double choEls, double hanEls) {
+  char buffer[80];
+  std::snprintf(buffer, sizeof(buffer), "[FJACE] Cho: %.1f%% Han: %.1f%%", choEls, hanEls);
   return std::string(buffer);
 }
 
@@ -187,10 +193,6 @@ void FjaceTracker::emit_current_info() const {
   g_choEls = score_for_side(sides[CHO]);
   g_hanEls = score_for_side(sides[HAN]);
 
-  const std::string info = format_info_string(g_choEls, g_hanEls);
-  sync_cout << info << sync_endl;
-  std::cerr << info << std::endl;
-
   if (CurrentProtocol == XBOARD) {
       char message[96];
       std::snprintf(message, sizeof(message), "telluser [FJACE] Cho: %.1f%% Han: %.1f%%", g_choEls, g_hanEls);
@@ -267,7 +269,13 @@ void fjace_reset() {
 std::string fjace_info_string(bool enabled, const std::string& variantName) {
   if (!enabled || !is_supported_variant(variantName))
       return "";
-  return format_info_string(g_choEls, g_hanEls);
+  return format_pv_comment(g_choEls, g_hanEls);
+}
+
+std::string fjace_debug_string(bool enabled, const std::string& variantName) {
+  if (!enabled || !is_supported_variant(variantName))
+      return "";
+  return format_debug_string(g_choEls, g_hanEls);
 }
 
 }  // namespace Stockfish
