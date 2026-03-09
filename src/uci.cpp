@@ -393,7 +393,7 @@ void UCI::loop(int argc, char* argv[]) {
               banmoves.push_back(UCI::to_move(pos, token));
       else if (token == "go")         go(pos, is, states, banmoves);
       else if (token == "position")   position(pos, is, states), banmoves.clear();
-      else if (token == "ucinewgame" || token == "usinewgame" || token == "uccinewgame") { Search::clear(); fjace_reset(); }
+      else if (token == "ucinewgame" || token == "usinewgame" || token == "uccinewgame") { Search::clear(); fjace_emit_final_report(Options["Enable_Cheat_Detector"], std::string(Options["UCI_Variant"])); fjace_reset(); }
       else if (token == "isready")    sync_cout << "readyok" << sync_endl;
 
       // Additional custom non-UCI commands, mainly for debugging.

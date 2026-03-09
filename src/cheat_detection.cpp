@@ -44,6 +44,18 @@ std::string format_debug_string(double choEls, double hanEls) {
   return std::string(buffer);
 }
 
+std::string format_pgn_comment(double choEls, double hanEls, int cpl) {
+  char buffer[128];
+  std::snprintf(buffer, sizeof(buffer), "{FJACE Cho ELS: %.1f%%, Han ELS: %.1f%%, CPL: %d}", choEls, hanEls, cpl);
+  return std::string(buffer);
+}
+
+std::string format_info_brace(double choEls, double hanEls) {
+  char buffer[128];
+  std::snprintf(buffer, sizeof(buffer), "info string {FJACE Cho ELS: %.1f%% | Han ELS: %.1f%%}", choEls, hanEls);
+  return std::string(buffer);
+}
+
 bool is_supported_variant(const std::string& variantName) {
   return variantName == "janggi" || variantName == "janggimodern";
 }
@@ -52,6 +64,7 @@ FjaceTracker g_tracker;
 
 double g_choEls = 0.0;
 double g_hanEls = 0.0;
+int g_lastCpl = 0;
 
 void FjaceTracker::reset() {
   baseFen.clear();
@@ -60,6 +73,7 @@ void FjaceTracker::reset() {
   sides[CHO] = SideAcc{};
   sides[HAN] = SideAcc{};
   lastCpl = 0.0;
+  g_lastCpl = 0;
 }
 
 void FjaceTracker::on_position_command(const Variant* variant,
@@ -192,8 +206,16 @@ FjaceTracker::UpdateResult FjaceTracker::evaluate_last_move(const Variant* varia
 void FjaceTracker::emit_current_info() const {
   g_choEls = score_for_side(sides[CHO]);
   g_hanEls = score_for_side(sides[HAN]);
+  g_lastCpl = int(std::round(lastCpl));
+
+  const std::string infoLine = format_info_brace(g_choEls, g_hanEls);
+  sync_cout << infoLine << sync_endl;
+  std::cerr << infoLine << std::endl;
 
   if (CurrentProtocol == XBOARD) {
+      const std::string comment = format_pgn_comment(g_choEls, g_hanEls, g_lastCpl);
+      sync_cout << "comment " << comment << sync_endl;
+
       char message[96];
       std::snprintf(message, sizeof(message), "telluser [FJACE] Cho: %.1f%% Han: %.1f%%", g_choEls, g_hanEls);
       sync_cout << message << sync_endl;
@@ -264,6 +286,22 @@ void fjace_reset() {
   g_tracker.reset();
   g_choEls = 0.0;
   g_hanEls = 0.0;
+  g_lastCpl = 0;
+}
+
+void fjace_emit_final_report(bool enabled, const std::string& variantName) {
+  if (!enabled || !is_supported_variant(variantName))
+      return;
+
+  char finalReport[128];
+  std::snprintf(finalReport, sizeof(finalReport), "{ [FJACE Final Report] Cho Total ELS: %.1f%% | Han Total ELS: %.1f%% }", g_choEls, g_hanEls);
+
+  const std::string infoLine = std::string("info string ") + finalReport;
+  sync_cout << infoLine << sync_endl;
+  std::cerr << infoLine << std::endl;
+
+  if (CurrentProtocol == XBOARD)
+      sync_cout << "comment " << finalReport << sync_endl;
 }
 
 std::string fjace_info_string(bool enabled, const std::string& variantName) {
