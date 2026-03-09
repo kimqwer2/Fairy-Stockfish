@@ -23,6 +23,7 @@
 #include <sstream>
 #include <string>
 
+#include "cheat_detection.h"
 #include "evaluate.h"
 #include "movegen.h"
 #include "position.h"
@@ -42,6 +43,8 @@ extern vector<string> setup_bench(const Position&, istream&);
 
 namespace {
 
+  FjaceTracker g_fjaceTracker;
+
   // position() is called when engine receives the "position" UCI command.
   // The function sets up the position described in the given FEN string ("fen")
   // or the starting position ("startpos") and then makes the moves given in the
@@ -51,6 +54,7 @@ namespace {
 
     Move m;
     string token, fen;
+    std::vector<std::string> parsedMoves;
 
     is >> token;
     // Parse as SFEN if specified
@@ -73,9 +77,19 @@ namespace {
     // Parse move list (if any)
     while (is >> token && (m = UCI::to_move(pos, token)) != MOVE_NONE)
     {
+        parsedMoves.push_back(token);
         states->emplace_back();
         pos.do_move(m, states->back());
     }
+
+    g_fjaceTracker.on_position_command(variants.find(Options["UCI_Variant"])->second,
+                                     std::string(Options["UCI_Variant"]),
+                                     fen,
+                                     sfen,
+                                     parsedMoves,
+                                     Options["Enable_Cheat_Detector"],
+                                     Options["UCI_Chess960"],
+                                     Threads.main());
   }
 
   // trace_eval() prints the evaluation for the current position, consistent with the UCI
@@ -380,7 +394,7 @@ void UCI::loop(int argc, char* argv[]) {
               banmoves.push_back(UCI::to_move(pos, token));
       else if (token == "go")         go(pos, is, states, banmoves);
       else if (token == "position")   position(pos, is, states), banmoves.clear();
-      else if (token == "ucinewgame" || token == "usinewgame" || token == "uccinewgame") Search::clear();
+      else if (token == "ucinewgame" || token == "usinewgame" || token == "uccinewgame") { Search::clear(); g_fjaceTracker.reset(); }
       else if (token == "isready")    sync_cout << "readyok" << sync_endl;
 
       // Additional custom non-UCI commands, mainly for debugging.
