@@ -2037,6 +2037,13 @@ string UCI::pv(const Position& pos, Depth depth, Value alpha, Value beta) {
       }
       else
       {
+      const std::string fjaceInfo = fjace_info_string(Options["Enable_Cheat_Detector"], std::string(Options["UCI_Variant"]));
+      if (!fjaceInfo.empty())
+      {
+          ss << fjaceInfo << "\n";
+          std::cerr << fjaceInfo << std::endl;
+      }
+
       ss << "info"
          << " depth "    << d
          << " seldepth " << rootMoves[i].selDepth
@@ -2062,7 +2069,6 @@ string UCI::pv(const Position& pos, Depth depth, Value alpha, Value beta) {
       for (Move m : rootMoves[i].pv)
           ss << " " << UCI::move(pos, m);
 
-      ss << fjace_pv_suffix(Options["Enable_Cheat_Detector"], std::string(Options["UCI_Variant"]));
       }
   }
 

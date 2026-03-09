@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <deque>
 #include <limits>
+#include <iostream>
 
 #include "evaluate.h"
 #include "misc.h"
@@ -31,10 +32,14 @@ inline double value_to_cp(Value v) {
 }  // namespace
 
 
-std::string format_pv_suffix(double choEls, double hanEls) {
+std::string format_info_string(double choEls, double hanEls) {
   char buffer[96];
-  std::snprintf(buffer, sizeof(buffer), " [Cho_ELS:%.1f%%_Han:%.1f%%]", choEls, hanEls);
+  std::snprintf(buffer, sizeof(buffer), "info string [FJACE] Cho_ELS: %.1f%% | Han_ELS: %.1f%%", choEls, hanEls);
   return std::string(buffer);
+}
+
+bool is_supported_variant(const std::string& variantName) {
+  return variantName == "janggi" || variantName == "janggimodern";
 }
 
 FjaceTracker g_tracker;
@@ -59,7 +64,7 @@ void FjaceTracker::on_position_command(const Variant* variant,
                                        bool enabled,
                                        bool chess960,
                                        Thread* th) {
-  if (!enabled || !variant || variantName != "janggimodern")
+  if (!enabled || !variant || !is_supported_variant(variantName))
     return;
 
   if (baseFen != fen || baseSfen != sfen || moves.size() < moveHistory.size()
@@ -181,11 +186,10 @@ FjaceTracker::UpdateResult FjaceTracker::evaluate_last_move(const Variant* varia
 void FjaceTracker::emit_current_info() const {
   g_choEls = score_for_side(sides[CHO]);
   g_hanEls = score_for_side(sides[HAN]);
-  const int cpl = int(std::round(lastCpl));
 
-  sync_cout << "info string [FJACE] Cho ELS: " << int(std::round(g_choEls))
-            << " | Han ELS: " << int(std::round(g_hanEls))
-            << " | Last Move CPL: " << cpl << sync_endl;
+  const std::string info = format_info_string(g_choEls, g_hanEls);
+  sync_cout << info << sync_endl;
+  std::cerr << info << std::endl;
 
   if (CurrentProtocol == XBOARD) {
       char message[96];
@@ -260,10 +264,10 @@ void fjace_reset() {
   g_hanEls = 0.0;
 }
 
-std::string fjace_pv_suffix(bool enabled, const std::string& variantName) {
-  if (!enabled || variantName != "janggimodern")
+std::string fjace_info_string(bool enabled, const std::string& variantName) {
+  if (!enabled || !is_supported_variant(variantName))
       return "";
-  return format_pv_suffix(g_choEls, g_hanEls);
+  return format_info_string(g_choEls, g_hanEls);
 }
 
 }  // namespace Stockfish
