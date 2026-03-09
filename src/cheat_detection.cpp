@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <deque>
 #include <limits>
 
@@ -28,6 +29,18 @@ inline double value_to_cp(Value v) {
 }
 
 }  // namespace
+
+
+std::string format_pv_suffix(double choEls, double hanEls) {
+  char buffer[96];
+  std::snprintf(buffer, sizeof(buffer), " [Cho_ELS:%.1f%%_Han:%.1f%%]", choEls, hanEls);
+  return std::string(buffer);
+}
+
+FjaceTracker g_tracker;
+
+double g_choEls = 0.0;
+double g_hanEls = 0.0;
 
 void FjaceTracker::reset() {
   baseFen.clear();
@@ -166,13 +179,19 @@ FjaceTracker::UpdateResult FjaceTracker::evaluate_last_move(const Variant* varia
 }
 
 void FjaceTracker::emit_current_info() const {
-  const int choEls = int(std::round(score_for_side(sides[CHO])));
-  const int hanEls = int(std::round(score_for_side(sides[HAN])));
+  g_choEls = score_for_side(sides[CHO]);
+  g_hanEls = score_for_side(sides[HAN]);
   const int cpl = int(std::round(lastCpl));
 
-  sync_cout << "info string [FJACE] Cho ELS: " << choEls
-            << " | Han ELS: " << hanEls
+  sync_cout << "info string [FJACE] Cho ELS: " << int(std::round(g_choEls))
+            << " | Han ELS: " << int(std::round(g_hanEls))
             << " | Last Move CPL: " << cpl << sync_endl;
+
+  if (CurrentProtocol == XBOARD) {
+      char message[96];
+      std::snprintf(message, sizeof(message), "telluser [FJACE] Cho: %.1f%% Han: %.1f%%", g_choEls, g_hanEls);
+      sync_cout << message << sync_endl;
+  }
 }
 
 double FjaceTracker::score_for_side(const SideAcc& acc) {
@@ -221,6 +240,30 @@ double FjaceTracker::correlation(const SideAcc& acc) {
   if (den <= std::numeric_limits<double>::epsilon())
     return 0.0;
   return std::max(-1.0, std::min(1.0, num / den));
+}
+
+
+void fjace_on_position_command(const Variant* variant,
+                               const std::string& variantName,
+                               const std::string& fen,
+                               bool sfen,
+                               const std::vector<std::string>& moves,
+                               bool enabled,
+                               bool chess960,
+                               Thread* th) {
+  g_tracker.on_position_command(variant, variantName, fen, sfen, moves, enabled, chess960, th);
+}
+
+void fjace_reset() {
+  g_tracker.reset();
+  g_choEls = 0.0;
+  g_hanEls = 0.0;
+}
+
+std::string fjace_pv_suffix(bool enabled, const std::string& variantName) {
+  if (!enabled || variantName != "janggimodern")
+      return "";
+  return format_pv_suffix(g_choEls, g_hanEls);
 }
 
 }  // namespace Stockfish

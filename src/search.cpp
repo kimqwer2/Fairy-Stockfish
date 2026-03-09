@@ -23,6 +23,7 @@
 #include <iostream>
 #include <sstream>
 
+#include "cheat_detection.h"
 #include "evaluate.h"
 #include "misc.h"
 #include "movegen.h"
@@ -2060,6 +2061,8 @@ string UCI::pv(const Position& pos, Depth depth, Value alpha, Value beta) {
 
       for (Move m : rootMoves[i].pv)
           ss << " " << UCI::move(pos, m);
+
+      ss << fjace_pv_suffix(Options["Enable_Cheat_Detector"], std::string(Options["UCI_Variant"]));
       }
   }
 

@@ -43,7 +43,6 @@ extern vector<string> setup_bench(const Position&, istream&);
 
 namespace {
 
-  FjaceTracker g_fjaceTracker;
 
   // position() is called when engine receives the "position" UCI command.
   // The function sets up the position described in the given FEN string ("fen")
@@ -82,7 +81,7 @@ namespace {
         pos.do_move(m, states->back());
     }
 
-    g_fjaceTracker.on_position_command(variants.find(Options["UCI_Variant"])->second,
+    fjace_on_position_command(variants.find(Options["UCI_Variant"])->second,
                                      std::string(Options["UCI_Variant"]),
                                      fen,
                                      sfen,
@@ -394,7 +393,7 @@ void UCI::loop(int argc, char* argv[]) {
               banmoves.push_back(UCI::to_move(pos, token));
       else if (token == "go")         go(pos, is, states, banmoves);
       else if (token == "position")   position(pos, is, states), banmoves.clear();
-      else if (token == "ucinewgame" || token == "usinewgame" || token == "uccinewgame") { Search::clear(); g_fjaceTracker.reset(); }
+      else if (token == "ucinewgame" || token == "usinewgame" || token == "uccinewgame") { Search::clear(); fjace_reset(); }
       else if (token == "isready")    sync_cout << "readyok" << sync_endl;
 
       // Additional custom non-UCI commands, mainly for debugging.

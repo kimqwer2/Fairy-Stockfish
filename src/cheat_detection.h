@@ -67,6 +67,19 @@ class FjaceTracker {
   double lastCpl = 0.0;
 };
 
+void fjace_on_position_command(const Variant* variant,
+                               const std::string& variantName,
+                               const std::string& fen,
+                               bool sfen,
+                               const std::vector<std::string>& moves,
+                               bool enabled,
+                               bool chess960,
+                               Thread* th);
+
+void fjace_reset();
+
+std::string fjace_pv_suffix(bool enabled, const std::string& variantName);
+
 }  // namespace Stockfish
 
 #endif
