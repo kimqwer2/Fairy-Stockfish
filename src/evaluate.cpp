@@ -1599,6 +1599,50 @@ make_v:
                                        : -Value(correction);
   }
 
+  // Small style bias for janggimodern: reward active pieces in enemy territory
+  // and pressure against the enemy king. Kept intentionally tiny to avoid
+  // destabilizing NNUE strength.
+  Value janggimodern_aggression_bonus(const Position& pos) {
+
+    if (std::string(Options["UCI_Variant"]) != "janggimodern")
+        return VALUE_ZERO;
+
+    Color us = pos.side_to_move();
+    Color them = ~us;
+
+    if (!pos.count<KING>(them))
+        return VALUE_ZERO;
+
+    constexpr int ForwardBonusPerPiece = 3;
+    constexpr int ForwardBonusCap = 24;
+    constexpr int KingDistanceBonusCap = 12;
+    constexpr int TotalBonusCap = 36;
+
+    const Square enemyKing = pos.square<KING>(them);
+    const Rank enemyTerritoryStart = Rank((pos.max_rank() + 1) / 2);
+
+    int forwardBonus = 0;
+    int kingDistanceBonus = 0;
+
+    Bitboard attackers = pos.pieces(us, ROOK, JANGGI_CANNON, HORSE);
+    while (attackers)
+    {
+        Square s = pop_lsb(attackers);
+
+        if (relative_rank(us, s, pos.max_rank()) >= enemyTerritoryStart)
+            forwardBonus += ForwardBonusPerPiece;
+
+        int chebyshev = distance(s, enemyKing);
+        if (chebyshev <= 4)
+            kingDistanceBonus += 5 - chebyshev; // closer attackers get a larger bonus
+    }
+
+    forwardBonus = std::min(forwardBonus, ForwardBonusCap);
+    kingDistanceBonus = std::min(kingDistanceBonus, KingDistanceBonusCap);
+
+    return Value(std::min(forwardBonus + kingDistanceBonus, TotalBonusCap));
+  }
+
 } // namespace Eval
 
 
@@ -1631,6 +1675,8 @@ Value Eval::evaluate(const Position& pos) {
              nnue +=  6 * scale / (5 * pos.checks_remaining( us))
                     - 6 * scale / (5 * pos.checks_remaining(~us));
          }
+
+         nnue += janggimodern_aggression_bonus(pos);
 
          return nnue;
       };
