@@ -251,6 +251,57 @@ namespace {
   constexpr Score MaxMobility  = S(150, 200);
   constexpr Score DropMobility = S(10, 10);
 
+  Value defensive_turtle_bonus(const Position& pos, Color c) {
+
+    if (!pos.count<KING>(c))
+        return VALUE_ZERO;
+
+    constexpr int HighPriorityHomeBonus = 4;
+    constexpr int OtherHomeBonus = 2;
+    constexpr int Ring1Bonus = 2;
+    constexpr int Ring2Bonus = 1;
+    constexpr int MaxBonus = 30;
+
+    const Square kingSq = pos.square<KING>(c);
+    const int ownHalfLimit = (int(pos.max_rank()) + 1) / 2;
+
+    int bonus = 0;
+    Bitboard pieces = pos.pieces(c) & ~pos.pieces(c, KING) & ~pos.pieces(c, PAWN);
+
+    while (pieces)
+    {
+        Square s = pop_lsb(pieces);
+        PieceType pt = type_of(pos.piece_on(s));
+
+        bool inOwnHalf = int(relative_rank(c, s, pos.max_rank())) < ownHalfLimit;
+        if (!inOwnHalf)
+            continue;
+
+        int pieceBonus = (pt == WAZIR || pt == HORSE || pt == JANGGI_CANNON) ? HighPriorityHomeBonus
+                                                                               : OtherHomeBonus;
+
+        int kingDist = distance(s, kingSq);
+        if (kingDist <= 1)
+            pieceBonus += Ring1Bonus;
+        else if (kingDist == 2)
+            pieceBonus += Ring2Bonus;
+
+        bonus += pieceBonus;
+    }
+
+    return Value(std::min(bonus, MaxBonus));
+  }
+
+  Value scaled_turtle_bonus(Value baseEval, Value bonus) {
+
+    if (bonus <= VALUE_ZERO || baseEval <= Value(300))
+        return bonus;
+
+    // Fade out defensive style while clearly winning, so conversion is not delayed.
+    int scale = std::clamp(700 - int(baseEval), 0, 400);
+    return bonus * scale / 400;
+  }
+
   // BishopPawns[distance from edge] contains a file-dependent penalty for pawns on
   // squares of the same color as our bishop.
   constexpr Score BishopPawns[int(FILE_NB) / 2] = {
@@ -1644,6 +1695,13 @@ Value Eval::evaluate(const Position& pos) {
 
       v = classical ? Evaluation<NO_TRACE>(pos).value()  // classical
                     : adjusted_NNUE();                   // NNUE
+  }
+
+  if (pos.variant()->variantTemplate == "janggi")
+  {
+      Value defensiveBonus = defensive_turtle_bonus(pos, pos.side_to_move())
+                           - defensive_turtle_bonus(pos, ~pos.side_to_move());
+      v += scaled_turtle_bonus(v, defensiveBonus);
   }
 
   // Damp down the evaluation linearly when shuffling
