@@ -666,7 +666,14 @@ namespace {
         && alpha < VALUE_DRAW
         && pos.has_game_cycle(ss->ply))
     {
-        alpha = value_draw(pos.this_thread());
+        Value cycleValue = value_draw(pos.this_thread());
+
+        const auto janggiModern = variants.find("janggimodern");
+        if (janggiModern != variants.end() && pos.variant() == janggiModern->second)
+            cycleValue = ss->staticEval != VALUE_NONE ? ss->staticEval
+                                                      : evaluate(pos);
+
+        alpha = std::max(alpha, cycleValue);
         if (alpha >= beta)
             return alpha;
     }
