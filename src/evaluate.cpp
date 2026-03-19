@@ -1616,9 +1616,21 @@ Value Eval::evaluate(const Position& pos) {
       // Scale and shift NNUE for compatibility with search and classical evaluation
       auto  adjusted_NNUE = [&]()
       {
-         int scale =   903
-                     + 32 * pos.count<PAWN>()
-                     + 32 * pos.non_pawn_material() / 1024;
+         static const Variant* janggimodern = variants.find("janggimodern")->second;
+         const bool isJanggiModern = pos.variant() == janggimodern;
+
+         const int infantryCount = isJanggiModern ? pos.count<SOLDIER>() : pos.count<PAWN>();
+         const int majorCount = isJanggiModern
+                              ? 3 * pos.count<ROOK>() + 2 * pos.count<JANGGI_CANNON>()
+                              : 0;
+         const int materialScale = isJanggiModern
+                                 ? 24 * pos.non_pawn_material() / 1024
+                                 : 32 * pos.non_pawn_material() / 1024;
+
+         int scale = (isJanggiModern ? 1016 : 903)
+                   + (isJanggiModern ? 24 : 32) * infantryCount
+                   + materialScale
+                   + 16 * majorCount;
 
          Value nnue = NNUE::evaluate(pos, true) * scale / 1024;
 
