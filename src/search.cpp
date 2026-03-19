@@ -1136,6 +1136,43 @@ moves_loop: // When in check, search starts from here
       movedPiece = pos.moved_piece(move);
       givesCheck = pos.gives_check(move);
 
+      const bool janggiModernCannonExtension = [&] {
+          if (   pos.variant()->variantTemplate != "janggi"
+              || pos.variant()->bikjangRule
+              || !pos.variant()->moveRepetitionIllegal
+              || pos.variant()->materialCounting != JANGGI_MATERIAL
+              || !pos.count<KING>(~us))
+              return false;
+
+          const Square from = from_sq(move);
+          const Square to = to_sq(move);
+          const PieceType movedPieceType = type_of(movedPiece);
+
+          if (movedPieceType == JANGGI_CANNON && givesCheck)
+              return true;
+
+          Bitboard occupiedAfter = (type_of(move) != DROP ? pos.pieces() ^ from : pos.pieces()) | to;
+          Bitboard janggiCannonsBefore = pos.pieces(JANGGI_CANNON);
+          Bitboard janggiCannonsAfter = janggiCannonsBefore;
+          Bitboard ourCannonsAfter = pos.pieces(us, JANGGI_CANNON);
+
+          if (movedPieceType == JANGGI_CANNON)
+          {
+              janggiCannonsAfter = (type_of(move) == DROP ? janggiCannonsAfter : janggiCannonsAfter ^ from) | to;
+              ourCannonsAfter = (type_of(move) == DROP ? ourCannonsAfter : ourCannonsAfter ^ from) | to;
+          }
+          else if (janggiCannonsAfter & to)
+              janggiCannonsAfter ^= to;
+
+          const Square enemyKing = pos.square<KING>(~us);
+          Bitboard cannonChecksBefore = pos.attackers_to(enemyKing, pos.pieces(), us, janggiCannonsBefore)
+                                     & pos.pieces(us, JANGGI_CANNON);
+          Bitboard cannonChecksAfter = pos.attackers_to(enemyKing, occupiedAfter, us, janggiCannonsAfter)
+                                    & ourCannonsAfter;
+
+          return cannonChecksAfter && !(cannonChecksBefore & cannonChecksAfter);
+      }();
+
       // Calculate new depth for this move
       newDepth = depth - 1;
 
@@ -1250,7 +1287,7 @@ moves_loop: // When in check, search starts from here
                   return beta;
           }
       }
-      else if (   givesCheck
+      else if (   (givesCheck || janggiModernCannonExtension)
                && depth > 6
                && abs(ss->staticEval) > Value(100))
           extension = 1;
