@@ -1798,14 +1798,16 @@ namespace {
         v->nnueAlias = "janggi";
         return v;
     }
-    // Modern rules of Janggi, where bikjang is not considered, but material counting is.
-    // The repetition rules are also adjusted for better compatibility with Kakao Janggi.
+    // Modern rules of Janggi, where repetitions are legal, bikjang is ignored,
+    // and the third repetition is adjudicated by material counting.
     Variant* janggi_modern_variant() {
         Variant* v = janggi_variant()->init();
         v->bikjangRule = false;
         v->materialCounting = JANGGI_MATERIAL;
-        v->moveRepetitionIllegal = true;
-        v->nFoldRule = 4; // avoid nFold being triggered before move repetition
+        v->perpetualCheckIllegal = false;
+        v->moveRepetitionIllegal = false;
+        v->nFoldRule = 3;
+        v->nFoldValue = VALUE_DRAW;
         v->nMoveRule = 100; // avoid adjudication before reaching 200 half-moves
         v->nnueAlias = "janggi";
         return v;

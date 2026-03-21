@@ -2656,9 +2656,6 @@ bool Position::is_optional_game_end(Value& result, int ply, int countStarted) co
           int cnt = 0;
           bool perpetualThem = var->perpetualCheckIllegal && st->checkersBB && stp->checkersBB;
           bool perpetualUs = var->perpetualCheckIllegal && st->previous->checkersBB && stp->previous->checkersBB;
-          auto repetition_threshold = [&](bool illegalRepetition) {
-              return illegalRepetition ? 2 : n_fold_rule();
-          };
           Bitboard chaseThem = undo_move_board(st->chased, st->previous->move) & stp->chased;
           Bitboard chaseUs = undo_move_board(st->previous->chased, stp->move) & stp->previous->chased;
           int moveRepetition = var->moveRepetitionIllegal
@@ -2699,12 +2696,8 @@ bool Position::is_optional_game_end(Value& result, int ply, int countStarted) co
               stp = stp->previous->previous;
               perpetualThem &= bool(stp->checkersBB);
 
-              // Illegal chase/check repetitions should be cut at the first repeated
-              // position, while normal repetitions still wait for the variant n-fold rule.
-              bool illegalRepetition = moveRepetition || chaseUs || chaseThem || perpetualUs || perpetualThem;
-
               if (   stp->key == st->key
-                  && ++cnt + 1 >= repetition_threshold(illegalRepetition))
+                  && ++cnt + 1 == n_fold_rule())
               {
                   result = convert_mate_value(  (perpetualThem || perpetualUs) ? (!perpetualUs ? VALUE_MATE : !perpetualThem ? -VALUE_MATE : VALUE_DRAW)
                                               : (chaseThem || chaseUs) ? (!chaseUs ? VALUE_MATE : !chaseThem ? -VALUE_MATE : VALUE_DRAW)

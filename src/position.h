@@ -325,6 +325,7 @@ public:
   bool is_optional_game_end(Value& result, int ply = 0, int countStarted = 0) const;
   bool is_game_end(Value& result, int ply = 0) const;
   Value material_counting_result() const;
+  bool second_repetition_extension() const;
   bool is_draw(int ply) const;
   bool has_game_cycle(int ply) const;
   bool has_repeated() const;
@@ -955,6 +956,15 @@ inline Value Position::stalemate_value(int ply) const {
   if (result == VALUE_DRAW && var->materialCounting)
       result = material_counting_result();
   return convert_mate_value(result, ply);
+}
+
+inline bool Position::second_repetition_extension() const {
+  assert(var != nullptr);
+  return st->repetition > 0
+      && var->nFoldRule == 3
+      && var->materialCounting == JANGGI_MATERIAL
+      && !var->perpetualCheckIllegal
+      && !var->moveRepetitionIllegal;
 }
 
 inline Value Position::checkmate_value(int ply) const {
@@ -1606,7 +1616,7 @@ inline Value Position::material_counting_result() const {
                      + weight_count(WAZIR, 3)
                      + weight_count(SOLDIER, 2)
                      - 1;
-      result = materialCount > 0 ? VALUE_MATE : -VALUE_MATE;
+      result = Value(materialCount * PawnValueEg);
       break;
   case UNWEIGHTED_MATERIAL:
       result =  count(WHITE, ALL_PIECES) > count(BLACK, ALL_PIECES) ?  VALUE_MATE
