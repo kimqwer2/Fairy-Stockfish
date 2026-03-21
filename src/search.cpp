@@ -1261,6 +1261,11 @@ moves_loop: // When in check, search starts from here
                &&  (ss->inCheck || MoveList<CAPTURES>(pos).size() == 1))
           extension = 1;
 
+      // Extend legal Janggi-style second repetitions so search can see the
+      // rule-defined third repetition adjudication instead of stopping early.
+      if (!extension && pos.second_repetition_extension())
+          extension = 1;
+
       // Add extension to new depth
       newDepth += extension;
       ss->doubleExtensions = (ss-1)->doubleExtensions + (extension == 2);

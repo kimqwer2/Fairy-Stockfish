@@ -2696,10 +2696,8 @@ bool Position::is_optional_game_end(Value& result, int ply, int countStarted) co
               stp = stp->previous->previous;
               perpetualThem &= bool(stp->checkersBB);
 
-              // Return a draw score if a position repeats once earlier but strictly
-              // after the root, or repeats twice before or at the root.
               if (   stp->key == st->key
-                  && ++cnt + 1 >= (ply > i && !moveRepetition && !chaseUs && !chaseThem && !perpetualUs && !perpetualThem ? 2 : n_fold_rule()))
+                  && ++cnt + 1 == n_fold_rule())
               {
                   result = convert_mate_value(  (perpetualThem || perpetualUs) ? (!perpetualUs ? VALUE_MATE : !perpetualThem ? -VALUE_MATE : VALUE_DRAW)
                                               : (chaseThem || chaseUs) ? (!chaseUs ? VALUE_MATE : !chaseThem ? -VALUE_MATE : VALUE_DRAW)
