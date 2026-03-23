@@ -51,6 +51,8 @@ namespace {
 
   void position(Position& pos, istringstream& is, StateListPtr& states) {
 
+    fjace_reset();
+
     Move m;
     string token, fen;
 
@@ -69,23 +71,15 @@ namespace {
     else
         return;
 
-    const std::string variantName = std::string(Options["UCI_Variant"]);
-    const bool isJanggiVariant = variantName.find("janggi") != std::string::npos;
-
     states = StateListPtr(new std::deque<StateInfo>(1)); // Drop old and create a new one
     pos.set(variants.find(Options["UCI_Variant"])->second, fen, Options["UCI_Chess960"], &states->back(), Threads.main(), sfen);
 
-    if (isJanggiVariant && Options["Enable_Cheat_Detector"])
-    {
-        fjace_reset();
-        fjace_start_new_position(variantName, fen, sfen, true);
-    }
 
     // Parse move list (if any)
     while (is >> token && (m = UCI::to_move(pos, token)) != MOVE_NONE)
     {
-        if (Options["Enable_Cheat_Detector"] && isJanggiVariant)
-            fjace_analyze_played_move(pos, m, variantName, true);
+        if (Options["Enable_Cheat_Detector"])
+            fjace_analyze_played_move(pos, m);
         states->emplace_back();
         pos.do_move(m, states->back());
     }
@@ -394,7 +388,7 @@ void UCI::loop(int argc, char* argv[]) {
               banmoves.push_back(UCI::to_move(pos, token));
       else if (token == "go")         go(pos, is, states, banmoves);
       else if (token == "position")   position(pos, is, states), banmoves.clear();
-      else if (token == "ucinewgame" || token == "usinewgame" || token == "uccinewgame") { Search::clear(); fjace_emit_final_report(Options["Enable_Cheat_Detector"], std::string(Options["UCI_Variant"])); fjace_reset(); }
+      else if (token == "ucinewgame" || token == "usinewgame" || token == "uccinewgame") { Search::clear(); fjace_reset(); }
       else if (token == "isready")    sync_cout << "readyok" << sync_endl;
 
       // Additional custom non-UCI commands, mainly for debugging.

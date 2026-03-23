@@ -1,76 +1,16 @@
 #ifndef CHEAT_DETECTION_H_INCLUDED
 #define CHEAT_DETECTION_H_INCLUDED
 
-#include <string>
-#include <vector>
-
 #include "types.h"
 
 namespace Stockfish {
 
 class Position;
-class Variant;
-class Thread;
-
-class FjaceTracker {
- public:
-  void reset();
-
-  void start_new_position(const std::string& variantName,
-                          const std::string& fen,
-                          bool sfen,
-                          bool enabled);
-  void analyze_played_move(const Position& pos,
-                           Move played,
-                           const std::string& variantName,
-                           bool enabled);
-  void emit_current_info() const;
-
- private:
-  enum SideId { CHO = 0, HAN = 1 };
-
-  struct SideAcc {
-    size_t considered = 0;
-    size_t top1 = 0;
-    size_t top3 = 0;
-    size_t criticalTotal = 0;
-    size_t criticalMatch = 0;
-    double cplSum = 0.0;
-    double cplSqSum = 0.0;
-    double playedSum = 0.0;
-    double bestSum = 0.0;
-    double playedSqSum = 0.0;
-    double bestSqSum = 0.0;
-    double crossSum = 0.0;
-  };
-
-  struct UpdateResult {
-    bool updated = false;
-    double lastCpl = 0.0;
-  };
-
-  UpdateResult analyze_played_move_impl(const Position& pos, Move played) ;
-
-  static double score_for_side(const SideAcc& acc);
-  static double variance(const SideAcc& acc);
-  static double correlation(const SideAcc& acc);
-
-  std::string baseFen;
-  bool baseSfen = false;
-  SideAcc sides[2];
-  double lastCpl = 0.0;
-};
-
-void fjace_start_new_position(const std::string& variantName, const std::string& fen, bool sfen, bool enabled);
-void fjace_analyze_played_move(const Position& pos, Move played, const std::string& variantName, bool enabled);
 
 void fjace_reset();
-
-void fjace_emit_final_report(bool enabled, const std::string& variantName);
-
-double fjace_get_cho_els(bool enabled, const std::string& variantName);
-double fjace_get_han_els(bool enabled, const std::string& variantName);
-std::string fjace_short_summary_parentheses(bool enabled, const std::string& variantName);
+void fjace_analyze_played_move(const Position& pos, Move m);
+double fjace_get_cho_els();
+double fjace_get_han_els();
 
 }  // namespace Stockfish
 

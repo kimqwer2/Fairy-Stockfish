@@ -2059,18 +2059,12 @@ string UCI::pv(const Position& pos, Depth depth, Value alpha, Value beta) {
          << " time "     << elapsed
          << " pv";
 
-      const std::string variantName = std::string(Options["UCI_Variant"]);
-      const bool isJanggiVariant = variantName.find("janggi") != std::string::npos;
-      const bool isFjaceActive = Options["Enable_Cheat_Detector"] && isJanggiVariant;
+      for (Move m : rootMoves[i].pv)
+          ss << " " << UCI::move(pos, m);
 
-      if (isFjaceActive && !rootMoves[i].pv.empty() && rootMoves[i].pv[0] != MOVE_NONE)
-      {
-          ss << " " << UCI::move(pos, rootMoves[i].pv[0]);
-          ss << " " << fjace_short_summary_parentheses(true, variantName);
-      }
-      else
-          for (Move m : rootMoves[i].pv)
-              ss << " " << UCI::move(pos, m);
+      const std::string variantName = std::string(Options["UCI_Variant"]);
+      if (Options["Enable_Cheat_Detector"] && (variantName == "janggi" || variantName == "janggimodern"))
+          ss << " (Cho:" << fjace_get_cho_els() << "% Han:" << fjace_get_han_els() << "%)";
 
       }
   }

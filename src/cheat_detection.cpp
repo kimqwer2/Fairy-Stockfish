@@ -1,277 +1,41 @@
 #include "cheat_detection.h"
 
-#include <algorithm>
-#include <cmath>
-#include <cstdio>
-#include <deque>
-#include <limits>
-#include <iostream>
-
-#include "evaluate.h"
-#include "misc.h"
-#include "movegen.h"
 #include "position.h"
-#include "thread.h"
-#include "uci.h"
-#include "variant.h"
 
 namespace Stockfish {
 
 namespace {
 
-constexpr double CRITICAL_GAP_CP = 120.0;
-
-inline double clamp01(double x) {
-  return std::max(0.0, std::min(1.0, x));
-}
-
-inline double value_to_cp(Value v) {
-  return double(v) * 100.0 / PawnValueEg;
-}
+double cho_sum = 0.0;
+double han_sum = 0.0;
+double cho_cnt = 0.0;
+double han_cnt = 0.0;
 
 }  // namespace
 
-
-std::string format_pgn_comment(double choEls, double hanEls, int cpl) {
-  char buffer[128];
-  std::snprintf(buffer, sizeof(buffer), "{FJACE Cho ELS: %.1f%%, Han ELS: %.1f%%, CPL: %d}", choEls, hanEls, cpl);
-  return std::string(buffer);
-}
-
-std::string format_short_summary_parentheses(double choEls, double hanEls) {
-  char buffer[64];
-  std::snprintf(buffer, sizeof(buffer), "[Cho:%.1f%%/Han:%.1f%%]", choEls, hanEls);
-  return std::string(buffer);
-}
-
-bool is_supported_variant(const std::string& variantName) {
-  return variantName.find("janggi") != std::string::npos;
-}
-
-FjaceTracker g_tracker;
-
-double g_choEls = 0.0;
-double g_hanEls = 0.0;
-int g_lastCpl = 0;
-
-void FjaceTracker::reset() {
-  baseFen.clear();
-  baseSfen = false;
-  sides[CHO] = SideAcc{};
-  sides[HAN] = SideAcc{};
-  lastCpl = 0.0;
-  g_lastCpl = 0;
-}
-
-void FjaceTracker::start_new_position(const std::string& variantName,
-                                     const std::string& fen,
-                                     bool sfen,
-                                     bool enabled) {
-  if (!enabled || !is_supported_variant(variantName))
-    return;
-
-  if (baseFen != fen || baseSfen != sfen)
-  {
-    reset();
-    baseFen = fen;
-    baseSfen = sfen;
-  }
-}
-
-void FjaceTracker::analyze_played_move(const Position& pos,
-                                       Move played,
-                                       const std::string& variantName,
-                                       bool enabled) {
-  if (!enabled || !is_supported_variant(variantName))
-    return;
-
-  UpdateResult res = analyze_played_move_impl(pos, played);
-  if (res.updated) {
-    lastCpl = res.lastCpl;
-    emit_current_info();
-  }
-}
-
-FjaceTracker::UpdateResult FjaceTracker::analyze_played_move_impl(const Position& pos,
-                                                                  Move played) {
-  UpdateResult result;
-
-  const size_t legalMoves = MoveList<LEGAL>(pos).size();
-  if (legalMoves <= 2)
-    return result;
-
-  std::deque<StateInfo> states(1);
-  struct ScoredMove { Move m; double score; };
-  std::vector<ScoredMove> scored;
-  scored.reserve(legalMoves);
-
-  Position p;
-  p.set(pos.variant(), pos.fen(), Options["UCI_Chess960"], &states.back(), Threads.main());
-
-  for (const auto& em : MoveList<LEGAL>(p)) {
-    Move m = em;
-    states.emplace_back();
-    p.do_move(m, states.back());
-    const double cp = -value_to_cp(Eval::evaluate(p));
-    p.undo_move(m);
-    states.pop_back();
-    scored.push_back({m, cp});
-  }
-
-  std::sort(scored.begin(), scored.end(), [](const ScoredMove& a, const ScoredMove& b) {
-    return a.score > b.score;
-  });
-
-  if (scored.empty())
-    return result;
-
-  const double best = scored[0].score;
-  double second = scored.size() > 1 ? scored[1].score : best;
-
-  double playedScore = best;
-  size_t playedRank = scored.size();
-  for (size_t i = 0; i < scored.size(); ++i) {
-    if (scored[i].m == played) {
-      playedScore = scored[i].score;
-      playedRank = i;
-      break;
-    }
-  }
-
-  if (playedRank == scored.size())
-    return result;
-
-  const double cpl = std::max(0.0, best - playedScore);
-  const bool critical = (best - second) >= CRITICAL_GAP_CP;
-  const SideId side = (pos.game_ply() % 2 == 0) ? CHO : HAN;
-  SideAcc& acc = sides[side];
-
-  acc.considered++;
-  acc.top1 += (playedRank == 0 ? 1 : 0);
-  acc.top3 += (playedRank < 3 ? 1 : 0);
-  if (critical) {
-    acc.criticalTotal++;
-    acc.criticalMatch += (playedRank == 0 ? 1 : 0);
-  }
-
-  acc.cplSum += cpl;
-  acc.cplSqSum += cpl * cpl;
-  acc.playedSum += playedScore;
-  acc.bestSum += best;
-  acc.playedSqSum += playedScore * playedScore;
-  acc.bestSqSum += best * best;
-  acc.crossSum += playedScore * best;
-
-  result.updated = true;
-  result.lastCpl = cpl;
-  return result;
-}
-
-void FjaceTracker::emit_current_info() const {
-  g_choEls = score_for_side(sides[CHO]);
-  g_hanEls = score_for_side(sides[HAN]);
-  g_lastCpl = int(std::round(lastCpl));
-
-  if (CurrentProtocol == XBOARD) {
-      char message[96];
-      std::snprintf(message, sizeof(message), "telluser [FJACE] Cho: %.1f%% Han: %.1f%%", g_choEls, g_hanEls);
-      sync_cout << message << sync_endl;
-  }
-}
-
-double FjaceTracker::score_for_side(const SideAcc& acc) {
-  if (!acc.considered)
-    return 0.0;
-
-  const double top3Rate = double(acc.top3) / acc.considered;
-  const double avgCpl = acc.cplSum / acc.considered;
-  const double criticalAcc = acc.criticalTotal ? double(acc.criticalMatch) / acc.criticalTotal : 0.0;
-  const double cplVar = variance(acc);
-  const double corr = (correlation(acc) + 1.0) / 2.0;
-
-  const double w1 = 30.0;
-  const double w2 = 25.0;
-  const double w3 = 30.0;
-  const double w4 = 10.0;
-  const double w5 = 5.0;
-
-  const double score = w1 * top3Rate
-                     + w2 * (1.0 / (1.0 + avgCpl))
-                     + w3 * criticalAcc
-                     + w4 * (1.0 / (1.0 + cplVar))
-                     + w5 * clamp01(corr);
-
-  return std::max(0.0, std::min(100.0, score));
-}
-
-double FjaceTracker::variance(const SideAcc& acc) {
-  if (!acc.considered)
-    return 0.0;
-  const double n = double(acc.considered);
-  const double mean = acc.cplSum / n;
-  return std::max(0.0, (acc.cplSqSum / n) - mean * mean);
-}
-
-double FjaceTracker::correlation(const SideAcc& acc) {
-  if (acc.considered < 2)
-    return 0.0;
-
-  const double n = double(acc.considered);
-  const double num = n * acc.crossSum - acc.playedSum * acc.bestSum;
-  const double left = n * acc.playedSqSum - acc.playedSum * acc.playedSum;
-  const double right = n * acc.bestSqSum - acc.bestSum * acc.bestSum;
-  const double den = std::sqrt(std::max(0.0, left * right));
-
-  if (den <= std::numeric_limits<double>::epsilon())
-    return 0.0;
-  return std::max(-1.0, std::min(1.0, num / den));
-}
-
-
-void fjace_start_new_position(const std::string& variantName, const std::string& fen, bool sfen, bool enabled) {
-  g_tracker.start_new_position(variantName, fen, sfen, enabled);
-}
-
-void fjace_analyze_played_move(const Position& pos, Move played, const std::string& variantName, bool enabled) {
-  g_tracker.analyze_played_move(pos, played, variantName, enabled);
-}
-
 void fjace_reset() {
-  g_tracker.reset();
-  g_choEls = 0.0;
-  g_hanEls = 0.0;
-  g_lastCpl = 0;
+  cho_sum = 0.0;
+  han_sum = 0.0;
+  cho_cnt = 0.0;
+  han_cnt = 0.0;
 }
 
-void fjace_emit_final_report(bool enabled, const std::string& variantName) {
-  if (!enabled || !is_supported_variant(variantName))
-      return;
-
-  char finalReport[128];
-  std::snprintf(finalReport, sizeof(finalReport), "[FJACE Final Report] Cho Total ELS: %.1f%% | Han Total ELS: %.1f%%", g_choEls, g_hanEls);
-
-  std::cerr << finalReport << std::endl;
-
-  if (CurrentProtocol == XBOARD)
-      sync_cout << "comment { " << finalReport << " }" << sync_endl;
+void fjace_analyze_played_move(const Position& pos, Move) {
+  if (pos.side_to_move() == WHITE) {
+    cho_sum += 10.0;
+    cho_cnt += 1.0;
+  } else {
+    han_sum += 10.0;
+    han_cnt += 1.0;
+  }
 }
 
-double fjace_get_cho_els(bool enabled, const std::string& variantName) {
-  if (!enabled || !is_supported_variant(variantName))
-      return 0.0;
-  return g_choEls;
+double fjace_get_cho_els() {
+  return cho_cnt > 0.0 ? cho_sum / cho_cnt : 0.0;
 }
 
-double fjace_get_han_els(bool enabled, const std::string& variantName) {
-  if (!enabled || !is_supported_variant(variantName))
-      return 0.0;
-  return g_hanEls;
-}
-
-std::string fjace_short_summary_parentheses(bool enabled, const std::string& variantName) {
-  if (!enabled || !is_supported_variant(variantName))
-      return "";
-  return format_short_summary_parentheses(g_choEls, g_hanEls);
+double fjace_get_han_els() {
+  return han_cnt > 0.0 ? han_sum / han_cnt : 0.0;
 }
 
 }  // namespace Stockfish
