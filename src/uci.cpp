@@ -23,6 +23,7 @@
 #include <sstream>
 #include <string>
 
+#include "fjace.h"
 #include "evaluate.h"
 #include "movegen.h"
 #include "position.h"
@@ -41,6 +42,7 @@ namespace Stockfish {
 extern vector<string> setup_bench(const Position&, istream&);
 
 namespace {
+
 
   // position() is called when engine receives the "position" UCI command.
   // The function sets up the position described in the given FEN string ("fen")
@@ -70,12 +72,17 @@ namespace {
     states = StateListPtr(new std::deque<StateInfo>(1)); // Drop old and create a new one
     pos.set(variants.find(Options["UCI_Variant"])->second, fen, Options["UCI_Chess960"], &states->back(), Threads.main(), sfen);
 
+
     // Parse move list (if any)
     while (is >> token && (m = UCI::to_move(pos, token)) != MOVE_NONE)
     {
+        bool isLastMove = is.peek() == EOF;
+        if (Options["Enable_Cheat_Detector"] && isLastMove)
+            fjace_analyze_played_move(pos, m);
         states->emplace_back();
         pos.do_move(m, states->back());
     }
+
   }
 
   // trace_eval() prints the evaluation for the current position, consistent with the UCI
@@ -380,7 +387,7 @@ void UCI::loop(int argc, char* argv[]) {
               banmoves.push_back(UCI::to_move(pos, token));
       else if (token == "go")         go(pos, is, states, banmoves);
       else if (token == "position")   position(pos, is, states), banmoves.clear();
-      else if (token == "ucinewgame" || token == "usinewgame" || token == "uccinewgame") Search::clear();
+      else if (token == "ucinewgame" || token == "usinewgame" || token == "uccinewgame") { Search::clear(); fjace_reset(); }
       else if (token == "isready")    sync_cout << "readyok" << sync_endl;
 
       // Additional custom non-UCI commands, mainly for debugging.
