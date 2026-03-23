@@ -23,6 +23,7 @@
 #include <iostream>
 #include <sstream>
 
+#include "cheat_detection.h"
 #include "evaluate.h"
 #include "misc.h"
 #include "movegen.h"
@@ -2060,6 +2061,11 @@ string UCI::pv(const Position& pos, Depth depth, Value alpha, Value beta) {
 
       for (Move m : rootMoves[i].pv)
           ss << " " << UCI::move(pos, m);
+
+      const std::string variantName = std::string(Options["UCI_Variant"]);
+      if (Options["Enable_Cheat_Detector"] && (variantName == "janggi" || variantName == "janggimodern"))
+          ss << " (Cho:" << fjace_get_cho_els() << "% Han:" << fjace_get_han_els() << "%)";
+
       }
   }
 

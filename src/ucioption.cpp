@@ -208,6 +208,7 @@ void init(OptionsMap& o) {
 #endif
   o["TsumeMode"]             << Option(false);
   o["VariantPath"]           << Option("<empty>", on_variant_path);
+  o["Enable_Cheat_Detector"] << Option(true);
   o["usemillisec"]           << Option(true); // time unit for UCCI
 }
 
