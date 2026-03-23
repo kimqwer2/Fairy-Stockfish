@@ -32,12 +32,6 @@ inline double value_to_cp(Value v) {
 }  // namespace
 
 
-std::string format_pv_comment(double choEls, double hanEls) {
-  char buffer[64];
-  std::snprintf(buffer, sizeof(buffer), "(Cho:%.1f%% Han:%.1f%%)", choEls, hanEls);
-  return std::string(buffer);
-}
-
 std::string format_debug_string(double choEls, double hanEls) {
   char buffer[80];
   std::snprintf(buffer, sizeof(buffer), "[FJACE] Cho: %.1f%% Han: %.1f%%", choEls, hanEls);
@@ -50,15 +44,9 @@ std::string format_pgn_comment(double choEls, double hanEls, int cpl) {
   return std::string(buffer);
 }
 
-std::string format_info_brace(double choEls, double hanEls) {
-  char buffer[128];
-  std::snprintf(buffer, sizeof(buffer), "info string {FJACE Cho ELS: %.1f%% | Han ELS: %.1f%%}", choEls, hanEls);
-  return std::string(buffer);
-}
-
-std::string format_short_summary(double choEls, double hanEls) {
-  char buffer[48];
-  std::snprintf(buffer, sizeof(buffer), "ELS:C%.1f/H%.1f", choEls, hanEls);
+std::string format_short_summary_parentheses(double choEls, double hanEls) {
+  char buffer[64];
+  std::snprintf(buffer, sizeof(buffer), "(Cho:%.1f%% Han:%.1f%%)", choEls, hanEls);
   return std::string(buffer);
 }
 
@@ -214,14 +202,7 @@ void FjaceTracker::emit_current_info() const {
   g_hanEls = score_for_side(sides[HAN]);
   g_lastCpl = int(std::round(lastCpl));
 
-  const std::string infoLine = format_info_brace(g_choEls, g_hanEls);
-  sync_cout << infoLine << sync_endl;
-  std::cerr << infoLine << std::endl;
-
   if (CurrentProtocol == XBOARD) {
-      const std::string comment = format_pgn_comment(g_choEls, g_hanEls, g_lastCpl);
-      sync_cout << "comment " << comment << sync_endl;
-
       char message[96];
       std::snprintf(message, sizeof(message), "telluser [FJACE] Cho: %.1f%% Han: %.1f%%", g_choEls, g_hanEls);
       sync_cout << message << sync_endl;
@@ -300,20 +281,12 @@ void fjace_emit_final_report(bool enabled, const std::string& variantName) {
       return;
 
   char finalReport[128];
-  std::snprintf(finalReport, sizeof(finalReport), "{ [FJACE Final Report] Cho Total ELS: %.1f%% | Han Total ELS: %.1f%% }", g_choEls, g_hanEls);
+  std::snprintf(finalReport, sizeof(finalReport), "[FJACE Final Report] Cho Total ELS: %.1f%% | Han Total ELS: %.1f%%", g_choEls, g_hanEls);
 
-  const std::string infoLine = std::string("info string ") + finalReport;
-  sync_cout << infoLine << sync_endl;
-  std::cerr << infoLine << std::endl;
+  std::cerr << finalReport << std::endl;
 
   if (CurrentProtocol == XBOARD)
-      sync_cout << "comment " << finalReport << sync_endl;
-}
-
-std::string fjace_info_string(bool enabled, const std::string& variantName) {
-  if (!enabled || !is_supported_variant(variantName))
-      return "";
-  return format_pv_comment(g_choEls, g_hanEls);
+      sync_cout << "comment { " << finalReport << " }" << sync_endl;
 }
 
 std::string fjace_debug_string(bool enabled, const std::string& variantName) {
@@ -322,10 +295,10 @@ std::string fjace_debug_string(bool enabled, const std::string& variantName) {
   return format_debug_string(g_choEls, g_hanEls);
 }
 
-std::string fjace_short_summary(bool enabled, const std::string& variantName) {
+std::string fjace_short_summary_parentheses(bool enabled, const std::string& variantName) {
   if (!enabled || !is_supported_variant(variantName))
       return "";
-  return format_short_summary(g_choEls, g_hanEls);
+  return format_short_summary_parentheses(g_choEls, g_hanEls);
 }
 
 }  // namespace Stockfish

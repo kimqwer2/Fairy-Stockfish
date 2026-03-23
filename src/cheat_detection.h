@@ -80,8 +80,7 @@ void fjace_reset();
 
 void fjace_emit_final_report(bool enabled, const std::string& variantName);
 
-std::string fjace_info_string(bool enabled, const std::string& variantName);
-std::string fjace_short_summary(bool enabled, const std::string& variantName);
+std::string fjace_short_summary_parentheses(bool enabled, const std::string& variantName);
 std::string fjace_debug_string(bool enabled, const std::string& variantName);
 
 }  // namespace Stockfish

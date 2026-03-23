@@ -2056,20 +2056,24 @@ string UCI::pv(const Position& pos, Depth depth, Value alpha, Value beta) {
           ss << " hashfull " << TT.hashfull();
 
       ss << " tbhits "   << tbHits
-         << " time "     << elapsed;
+         << " time "     << elapsed
+         << " pv";
 
-      const std::string fjaceShort = fjace_short_summary(Options["Enable_Cheat_Detector"], std::string(Options["UCI_Variant"]));
-      if (!fjaceShort.empty())
-          ss << " string " << fjaceShort;
+      const std::string variantName = std::string(Options["UCI_Variant"]);
+      const bool isFjaceActive = Options["Enable_Cheat_Detector"]
+                              && (variantName == "janggi" || variantName == "janggimodern");
 
-      ss << " pv";
+      if (isFjaceActive && !rootMoves[i].pv.empty() && rootMoves[i].pv[0] != MOVE_NONE)
+      {
+          ss << " " << UCI::move(pos, rootMoves[i].pv[0]);
 
-      for (Move m : rootMoves[i].pv)
-          ss << " " << UCI::move(pos, m);
-
-      const std::string fjaceDebug = fjace_debug_string(Options["Enable_Cheat_Detector"], std::string(Options["UCI_Variant"]));
-      if (!fjaceDebug.empty())
-          std::cerr << fjaceDebug << std::endl;
+          const std::string fjaceShort = fjace_short_summary_parentheses(true, variantName);
+          if (!fjaceShort.empty())
+              ss << " " << fjaceShort;
+      }
+      else
+          for (Move m : rootMoves[i].pv)
+              ss << " " << UCI::move(pos, m);
 
       }
   }
