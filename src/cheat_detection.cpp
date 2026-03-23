@@ -40,7 +40,7 @@ std::string format_pgn_comment(double choEls, double hanEls, int cpl) {
 
 std::string format_short_summary_parentheses(double choEls, double hanEls) {
   char buffer[64];
-  std::snprintf(buffer, sizeof(buffer), "(Cho:%.1f%% Han:%.1f%%)", choEls, hanEls);
+  std::snprintf(buffer, sizeof(buffer), "[Cho:%.1f%%/Han:%.1f%%]", choEls, hanEls);
   return std::string(buffer);
 }
 
@@ -57,83 +57,63 @@ int g_lastCpl = 0;
 void FjaceTracker::reset() {
   baseFen.clear();
   baseSfen = false;
-  moveHistory.clear();
   sides[CHO] = SideAcc{};
   sides[HAN] = SideAcc{};
   lastCpl = 0.0;
   g_lastCpl = 0;
 }
 
-void FjaceTracker::on_position_command(const Variant* variant,
-                                       const std::string& variantName,
-                                       const std::string& fen,
-                                       bool sfen,
-                                       const std::vector<std::string>& moves,
-                                       bool enabled,
-                                       bool chess960,
-                                       Thread* th) {
-  if (!enabled || !variant || !is_supported_variant(variantName))
+void FjaceTracker::start_new_position(const std::string& variantName,
+                                     const std::string& fen,
+                                     bool sfen,
+                                     bool enabled) {
+  if (!enabled || !is_supported_variant(variantName))
     return;
 
-  if (baseFen != fen || baseSfen != sfen || moves.size() < moveHistory.size()
-      || !std::equal(moveHistory.begin(), moveHistory.end(), moves.begin())) {
+  if (baseFen != fen || baseSfen != sfen)
+  {
     reset();
     baseFen = fen;
     baseSfen = sfen;
   }
+}
 
-  if (moves.size() == moveHistory.size())
+void FjaceTracker::analyze_played_move(const Position& pos,
+                                       Move played,
+                                       const std::string& variantName,
+                                       bool enabled) {
+  if (!enabled || !is_supported_variant(variantName))
     return;
 
-  UpdateResult res = evaluate_last_move(variant, fen, sfen, moves, chess960, th);
-  moveHistory = moves;
-
+  UpdateResult res = analyze_played_move_impl(pos, played);
   if (res.updated) {
     lastCpl = res.lastCpl;
     emit_current_info();
   }
 }
 
-FjaceTracker::UpdateResult FjaceTracker::evaluate_last_move(const Variant* variant,
-                                                            const std::string& fen,
-                                                            bool sfen,
-                                                            const std::vector<std::string>& moves,
-                                                            bool chess960,
-                                                            Thread* th) {
+FjaceTracker::UpdateResult FjaceTracker::analyze_played_move_impl(const Position& pos,
+                                                                  Move played) {
   UpdateResult result;
-
-  std::deque<StateInfo> states(1);
-  Position pos;
-  pos.set(variant, fen, chess960, &states.back(), th, sfen);
-
-  for (size_t i = 0; i + 1 < moves.size(); ++i) {
-    std::string uciMove = moves[i];
-    Move m = UCI::to_move(pos, uciMove);
-    if (m == MOVE_NONE)
-      return result;
-    states.emplace_back();
-    pos.do_move(m, states.back());
-  }
-
-  std::string playedStr = moves.back();
-  Move played = UCI::to_move(pos, playedStr);
-  if (played == MOVE_NONE)
-    return result;
 
   const size_t legalMoves = MoveList<LEGAL>(pos).size();
   if (legalMoves <= 2)
     return result;
 
+  std::deque<StateInfo> states(1);
   struct ScoredMove { Move m; double score; };
   std::vector<ScoredMove> scored;
   scored.reserve(legalMoves);
 
-  for (const auto& em : MoveList<LEGAL>(pos)) {
+  Position p;
+  p.set(pos.variant(), pos.fen(), Options["UCI_Chess960"], &states.back(), Threads.main());
+
+  for (const auto& em : MoveList<LEGAL>(p)) {
     Move m = em;
     states.emplace_back();
-    pos.do_move(m, states.back());
-    const double cp = -value_to_cp(Eval::evaluate(pos));
-    pos.undo_move(m);
+    p.do_move(m, states.back());
+    const double cp = -value_to_cp(Eval::evaluate(p));
+    p.undo_move(m);
     states.pop_back();
     scored.push_back({m, cp});
   }
@@ -146,9 +126,7 @@ FjaceTracker::UpdateResult FjaceTracker::evaluate_last_move(const Variant* varia
     return result;
 
   const double best = scored[0].score;
-  double second = best;
-  if (scored.size() > 1)
-    second = scored[1].score;
+  double second = scored.size() > 1 ? scored[1].score : best;
 
   double playedScore = best;
   size_t playedRank = scored.size();
@@ -165,9 +143,7 @@ FjaceTracker::UpdateResult FjaceTracker::evaluate_last_move(const Variant* varia
 
   const double cpl = std::max(0.0, best - playedScore);
   const bool critical = (best - second) >= CRITICAL_GAP_CP;
-
-  // odd plies -> Cho, even plies -> Han
-  const SideId side = (moves.size() % 2 == 1) ? CHO : HAN;
+  const SideId side = (pos.game_ply() % 2 == 0) ? CHO : HAN;
   SideAcc& acc = sides[side];
 
   acc.considered++;
@@ -252,15 +228,12 @@ double FjaceTracker::correlation(const SideAcc& acc) {
 }
 
 
-void fjace_on_position_command(const Variant* variant,
-                               const std::string& variantName,
-                               const std::string& fen,
-                               bool sfen,
-                               const std::vector<std::string>& moves,
-                               bool enabled,
-                               bool chess960,
-                               Thread* th) {
-  g_tracker.on_position_command(variant, variantName, fen, sfen, moves, enabled, chess960, th);
+void fjace_start_new_position(const std::string& variantName, const std::string& fen, bool sfen, bool enabled) {
+  g_tracker.start_new_position(variantName, fen, sfen, enabled);
+}
+
+void fjace_analyze_played_move(const Position& pos, Move played, const std::string& variantName, bool enabled) {
+  g_tracker.analyze_played_move(pos, played, variantName, enabled);
 }
 
 void fjace_reset() {

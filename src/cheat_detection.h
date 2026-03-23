@@ -8,6 +8,7 @@
 
 namespace Stockfish {
 
+class Position;
 class Variant;
 class Thread;
 
@@ -15,15 +16,14 @@ class FjaceTracker {
  public:
   void reset();
 
-  void on_position_command(const Variant* variant,
+  void start_new_position(const std::string& variantName,
+                          const std::string& fen,
+                          bool sfen,
+                          bool enabled);
+  void analyze_played_move(const Position& pos,
+                           Move played,
                            const std::string& variantName,
-                           const std::string& fen,
-                           bool sfen,
-                           const std::vector<std::string>& moves,
-                           bool enabled,
-                           bool chess960,
-                           Thread* th);
-
+                           bool enabled);
   void emit_current_info() const;
 
  private:
@@ -49,12 +49,7 @@ class FjaceTracker {
     double lastCpl = 0.0;
   };
 
-  UpdateResult evaluate_last_move(const Variant* variant,
-                                  const std::string& fen,
-                                  bool sfen,
-                                  const std::vector<std::string>& moves,
-                                  bool chess960,
-                                  Thread* th);
+  UpdateResult analyze_played_move_impl(const Position& pos, Move played) ;
 
   static double score_for_side(const SideAcc& acc);
   static double variance(const SideAcc& acc);
@@ -62,19 +57,12 @@ class FjaceTracker {
 
   std::string baseFen;
   bool baseSfen = false;
-  std::vector<std::string> moveHistory;
   SideAcc sides[2];
   double lastCpl = 0.0;
 };
 
-void fjace_on_position_command(const Variant* variant,
-                               const std::string& variantName,
-                               const std::string& fen,
-                               bool sfen,
-                               const std::vector<std::string>& moves,
-                               bool enabled,
-                               bool chess960,
-                               Thread* th);
+void fjace_start_new_position(const std::string& variantName, const std::string& fen, bool sfen, bool enabled);
+void fjace_analyze_played_move(const Position& pos, Move played, const std::string& variantName, bool enabled);
 
 void fjace_reset();
 
