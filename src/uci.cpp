@@ -51,8 +51,6 @@ namespace {
 
   void position(Position& pos, istringstream& is, StateListPtr& states) {
 
-    fjace_reset();
-
     Move m;
     string token, fen;
 
@@ -78,7 +76,8 @@ namespace {
     // Parse move list (if any)
     while (is >> token && (m = UCI::to_move(pos, token)) != MOVE_NONE)
     {
-        if (Options["Enable_Cheat_Detector"])
+        bool isLastMove = is.peek() == EOF;
+        if (Options["Enable_Cheat_Detector"] && isLastMove)
             fjace_analyze_played_move(pos, m);
         states->emplace_back();
         pos.do_move(m, states->back());
