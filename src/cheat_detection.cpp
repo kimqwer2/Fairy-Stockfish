@@ -32,12 +32,6 @@ inline double value_to_cp(Value v) {
 }  // namespace
 
 
-std::string format_debug_string(double choEls, double hanEls) {
-  char buffer[80];
-  std::snprintf(buffer, sizeof(buffer), "[FJACE] Cho: %.1f%% Han: %.1f%%", choEls, hanEls);
-  return std::string(buffer);
-}
-
 std::string format_pgn_comment(double choEls, double hanEls, int cpl) {
   char buffer[128];
   std::snprintf(buffer, sizeof(buffer), "{FJACE Cho ELS: %.1f%%, Han ELS: %.1f%%, CPL: %d}", choEls, hanEls, cpl);
@@ -51,7 +45,7 @@ std::string format_short_summary_parentheses(double choEls, double hanEls) {
 }
 
 bool is_supported_variant(const std::string& variantName) {
-  return variantName == "janggi" || variantName == "janggimodern";
+  return variantName.find("janggi") != std::string::npos;
 }
 
 FjaceTracker g_tracker;
@@ -289,10 +283,16 @@ void fjace_emit_final_report(bool enabled, const std::string& variantName) {
       sync_cout << "comment { " << finalReport << " }" << sync_endl;
 }
 
-std::string fjace_debug_string(bool enabled, const std::string& variantName) {
+double fjace_get_cho_els(bool enabled, const std::string& variantName) {
   if (!enabled || !is_supported_variant(variantName))
-      return "";
-  return format_debug_string(g_choEls, g_hanEls);
+      return 0.0;
+  return g_choEls;
+}
+
+double fjace_get_han_els(bool enabled, const std::string& variantName) {
+  if (!enabled || !is_supported_variant(variantName))
+      return 0.0;
+  return g_hanEls;
 }
 
 std::string fjace_short_summary_parentheses(bool enabled, const std::string& variantName) {

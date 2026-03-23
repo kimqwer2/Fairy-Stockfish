@@ -70,8 +70,14 @@ namespace {
     else
         return;
 
+    const std::string variantName = std::string(Options["UCI_Variant"]);
+    const bool isJanggiVariant = variantName.find("janggi") != std::string::npos;
+
     states = StateListPtr(new std::deque<StateInfo>(1)); // Drop old and create a new one
     pos.set(variants.find(Options["UCI_Variant"])->second, fen, Options["UCI_Chess960"], &states->back(), Threads.main(), sfen);
+
+    if (parsedMoves.empty() && isJanggiVariant && Options["Enable_Cheat_Detector"])
+        fjace_reset();
 
     // Parse move list (if any)
     while (is >> token && (m = UCI::to_move(pos, token)) != MOVE_NONE)
@@ -82,7 +88,7 @@ namespace {
     }
 
     fjace_on_position_command(variants.find(Options["UCI_Variant"])->second,
-                                     std::string(Options["UCI_Variant"]),
+                                     variantName,
                                      fen,
                                      sfen,
                                      parsedMoves,
