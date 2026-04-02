@@ -24,6 +24,7 @@
 #include <sstream>
 
 #include "evaluate.h"
+#include "experience.h"
 #include "misc.h"
 #include "movegen.h"
 #include "movepick.h"
@@ -1135,6 +1136,8 @@ moves_loop: // When in check, search starts from here
       captureOrPromotion = pos.capture_or_promotion(move);
       movedPiece = pos.moved_piece(move);
       givesCheck = pos.gives_check(move);
+
+      if (Options["UCI_Variant"] == "janggimodern" && is_bad_experience(pos.key(), static_cast<uint16_t>(move))) { value = -VALUE_INFINITE; continue; }
 
       // Calculate new depth for this move
       newDepth = depth - 1;
