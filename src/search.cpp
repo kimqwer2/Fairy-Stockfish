@@ -23,6 +23,7 @@
 #include <iostream>
 #include <sstream>
 
+#include "custom_book.h"
 #include "evaluate.h"
 #include "misc.h"
 #include "movegen.h"
@@ -176,6 +177,13 @@ void Search::clear() {
 /// command. It searches from the root position and outputs the "bestmove".
 
 void MainThread::search() {
+
+  auto it = openingBook.find(rootPos.fen());
+  if (it != openingBook.end())
+  {
+      sync_cout << "bestmove " << it->second << sync_endl;
+      return;
+  }
 
   if (Limits.perft)
   {
