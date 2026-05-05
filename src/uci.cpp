@@ -19,6 +19,8 @@
 #include <cstdlib>
 #include <cassert>
 #include <cmath>
+#include <cstdint>
+#include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -245,6 +247,79 @@ namespace {
   // load() is called when engine receives the "load" or "check" command.
   // The function reads variant configuration files.
 
+  struct EvalRelabelEntryHeader {
+    uint16_t fenSize;
+    int16_t score;
+    int8_t wdl;
+  };
+
+  bool eval_relabel(const std::string& inputPath, const std::string& outputPath) {
+
+    std::ifstream in(inputPath, std::ios::binary);
+    if (!in)
+    {
+        sync_cout << "eval-relabel: unable to open input file: " << inputPath << sync_endl;
+        return false;
+    }
+
+    std::ofstream out(outputPath, std::ios::binary | std::ios::trunc);
+    if (!out)
+    {
+        sync_cout << "eval-relabel: unable to open output file: " << outputPath << sync_endl;
+        return false;
+    }
+
+    StateListPtr states(new std::deque<StateInfo>(1));
+    Position p;
+
+    uint64_t count = 0;
+    while (true)
+    {
+        EvalRelabelEntryHeader h;
+        in.read(reinterpret_cast<char*>(&h), sizeof(h));
+
+        if (!in)
+        {
+            if (in.eof())
+                break;
+            sync_cout << "eval-relabel: read error in header at record " << count << sync_endl;
+            return false;
+        }
+
+        if (h.fenSize == 0)
+        {
+            sync_cout << "eval-relabel: invalid empty FEN at record " << count << sync_endl;
+            return false;
+        }
+
+        std::string fen(h.fenSize, ' ');
+        in.read(&fen[0], h.fenSize);
+        if (!in)
+        {
+            sync_cout << "eval-relabel: read error in FEN at record " << count << sync_endl;
+            return false;
+        }
+
+        p.set(variants.find(Options["UCI_Variant"])->second, fen, Options["UCI_Chess960"], &states->back(), Threads.main());
+
+        h.score = static_cast<int16_t>(Eval::evaluate(p));
+
+        out.write(reinterpret_cast<const char*>(&h), sizeof(h));
+        out.write(fen.data(), fen.size());
+        if (!out)
+        {
+            sync_cout << "eval-relabel: write error at record " << count << sync_endl;
+            return false;
+        }
+
+        ++count;
+        states->resize(1);
+    }
+
+    sync_cout << "eval-relabel: processed " << count << " records" << sync_endl;
+    return true;
+  }
+
   void load(istringstream& is, bool check = false) {
 
     string token;
@@ -400,6 +475,14 @@ void UCI::loop(int argc, char* argv[]) {
       }
       else if (token == "load")     { load(is); argc = 1; } // continue reading stdin
       else if (token == "check")    load(is, true);
+      else if (token == "eval-relabel")
+      {
+          std::string inputPath, outputPath;
+          if (!(is >> inputPath >> outputPath))
+              sync_cout << "Usage: eval-relabel <input.binpack> <output.binpack>" << sync_endl;
+          else
+              eval_relabel(inputPath, outputPath);
+      }
       // UCI-Cyclone omits the "position" keyword
       else if (token == "fen" || token == "startpos")
       {
