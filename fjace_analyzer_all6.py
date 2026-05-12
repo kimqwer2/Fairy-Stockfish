@@ -955,10 +955,12 @@ def calculate_tactical_burst(moves: List[HistoryEntry]) -> Tuple[float, List[Tac
         for m in game_moves:
             if m.is_forced or m.ply < 12 or abs(m.current_eval) >= 1800:
                 continue
-            is_hard = m.eval_gap <= 80
-            is_tactical_close = m.is_critical and m.eval_gap <= 120
-            is_clean_hard_hit = m.eval_loss <= 5 and m.eval_gap <= 120
-            if not (is_hard or is_tactical_close or is_clean_hard_hit):
+            # Avoid overvaluing naturally forcing Janggi continuations: a perfect move is
+            # not treated as difficult unless the engine gap also indicates real choice.
+            is_hard = m.eval_gap <= 60
+            is_tactical_close = m.is_critical and m.eval_gap <= 90
+            has_candidate_choice = len(m.top_3_moves) >= 2
+            if not has_candidate_choice or not (is_hard or is_tactical_close):
                 continue
             difficult.append(m)
 
@@ -975,8 +977,9 @@ def calculate_tactical_burst(moves: List[HistoryEntry]) -> Tuple[float, List[Tac
                 w_rank = sum(_rank_weighted_match(m) for m in window) / size
                 w_top1 = sum(1 for m in window if m.is_top_1) / size * 100
                 w_std = math.sqrt(sum((x - w_acpl) ** 2 for x in losses) / size)
-                hard_count = sum(1 for m in window if m.eval_gap <= 50 or m.is_critical)
-                if hard_count < max(2, size - 1):
+                hard_count = sum(1 for m in window if m.eval_gap <= 50 or (m.is_critical and m.eval_gap <= 90))
+                required_hard = size if size <= 4 else size - 1
+                if hard_count < required_hard:
                     continue
 
                 outside = [m for m in unforced if not (window[0].ply <= m.ply <= window[-1].ply)]
@@ -1001,37 +1004,71 @@ def calculate_tactical_burst(moves: List[HistoryEntry]) -> Tuple[float, List[Tac
                         if prev.eval_loss >= 200:
                             recovery_count += 1
 
-                acpl_component = clamp_map(w_acpl, 8.0, 1.5, 0.0, 38.0)
-                rank_component = clamp_map(w_rank, 0.70, 0.95, 0.0, 32.0)
-                top1_component = clamp_map(w_top1, 50.0, 83.0, 0.0, 12.0)
-                improvement_component = clamp_map(baseline_acpl - w_acpl, 12.0, 45.0, 0.0, 12.0)
-                consistency_component = clamp_map(baseline_std - w_std, 8.0, 35.0, 0.0, 6.0)
-                context_component = min(10.0, swing_count * 4.0 + recovery_count * 5.0)
+                similar_count = 0
+                for j in range(len(difficult) - size + 1):
+                    other = difficult[j:j + size]
+                    if other[-1].ply - other[0].ply > 18:
+                        continue
+                    other_acpl = sum(x.eval_loss for x in other) / size
+                    other_rank = sum(_rank_weighted_match(x) for x in other) / size
+                    if other_acpl <= 8.0 and other_rank >= 0.70:
+                        similar_count += 1
 
-                raw_score = acpl_component + rank_component + top1_component + improvement_component + consistency_component + context_component
+                relative_gain = baseline_acpl - w_acpl
+                rank_gain = w_rank - baseline_rank
+                variance_gain = baseline_std - w_std
+                has_context = bool(swing_count or recovery_count)
 
-                if baseline_acpl <= 14.0 and baseline_rank >= 0.72:
+                # Perfect short windows are common in professional Janggi.  The score is
+                # therefore mostly relative to the player's surrounding level, not absolute ACPL 0.
+                acpl_component = clamp_map(w_acpl, 6.0, 0.0, 0.0, 8.0)
+                improvement_component = clamp_map(relative_gain, 18.0, 60.0, 0.0, 34.0)
+                rank_component = clamp_map(rank_gain, 0.18, 0.50, 0.0, 18.0)
+                consistency_component = clamp_map(variance_gain, 12.0, 45.0, 0.0, 12.0)
+                context_component = min(12.0, swing_count * 5.0 + recovery_count * 6.0)
+                rarity_component = 8.0 if similar_count == 1 and relative_gain >= 22.0 else (3.0 if similar_count == 2 and relative_gain >= 30.0 else 0.0)
+
+                raw_score = acpl_component + improvement_component + rank_component + consistency_component + context_component + rarity_component
+
+                length_weight = {3: 0.30, 4: 0.50, 5: 0.78, 6: 1.00}[size]
+                raw_score *= length_weight
+
+                if baseline_acpl <= 18.0 and 12.0 <= baseline_std <= 45.0 and baseline_rank >= 0.55:
+                    raw_score *= 0.35 if size <= 4 else 0.55
+                elif baseline_acpl <= 24.0 and baseline_rank >= 0.60:
+                    raw_score *= 0.65 if size <= 4 else 0.80
+                if baseline_rank >= 0.72:
                     raw_score *= 0.70
-                if w_acpl > 6.0 or w_rank < 0.72:
+                if similar_count >= 3:
+                    raw_score *= 0.65
+                if relative_gain < 15.0:
+                    raw_score *= 0.40
+                if rank_gain < 0.12 and not has_context:
                     raw_score *= 0.55
-                if hard_count < size:
-                    raw_score *= 0.85
-                if size == 3 and not (swing_count or recovery_count) and w_top1 < 67.0:
-                    raw_score *= 0.70
+                if w_acpl > 6.0 or w_rank < 0.72:
+                    raw_score *= 0.50
                 if w_std > 10.0:
-                    raw_score *= 0.75
+                    raw_score *= 0.70
 
-                score = min(99.0, max(0.0, raw_score))
-                if score < 45.0:
+                cap = {3: 24.0, 4: 42.0, 5: 68.0, 6: 82.0}[size]
+                if has_context and relative_gain >= 25.0:
+                    cap += {3: 8.0, 4: 10.0, 5: 8.0, 6: 6.0}[size]
+                if relative_gain < 25.0 or rank_gain < 0.18:
+                    cap = min(cap, 40.0 if size <= 4 else 58.0)
+
+                score = min(cap, max(0.0, raw_score))
+                if score < 35.0:
                     continue
 
                 reasons = []
                 if w_acpl <= 4.0: reasons.append(f"단기 ACPL {w_acpl:.1f}")
-                if w_rank >= 0.85: reasons.append(f"순위가중 일치 {w_rank*100:.0f}%")
-                if baseline_acpl - w_acpl >= 15.0: reasons.append(f"주변 대비 손실 {baseline_acpl - w_acpl:.1f} 감소")
+                if rank_gain >= 0.18: reasons.append(f"주변 대비 순위가중 +{rank_gain*100:.0f}%")
+                if relative_gain >= 18.0: reasons.append(f"주변 대비 손실 {relative_gain:.1f} 감소")
+                if variance_gain >= 12.0: reasons.append(f"단기 편차 {w_std:.1f}로 수렴")
+                if similar_count <= 2: reasons.append("게임 내 드문 정밀 구간")
                 if swing_count: reasons.append(f"평가 급변 후 정밀수 {swing_count}회")
                 if recovery_count: reasons.append(f"실수 직후 복구 {recovery_count}회")
-                if not reasons: reasons.append("난해한 비강제 수순의 단기 정밀도 상승")
+                if not reasons: reasons.append("검토용 국지 정밀도 상승")
 
                 scored.append(TacticalBurstResult(
                     score=score,
@@ -1067,10 +1104,10 @@ def calculate_tactical_burst(moves: List[HistoryEntry]) -> Tuple[float, List[Tac
         return 0.0, [], "단기 전술 버스트 특이점 없음"
 
     best = filtered[0]
-    if best.score >= 80.0:
-        verdict = "짧은 난전/구조 전환 구간에서 기계적 정밀도 상승"
-    elif best.score >= 65.0:
-        verdict = "검토가 필요한 단기 정밀도 상승"
+    if best.score >= 70.0:
+        verdict = "다른 지표와 함께 검토할 국지 정밀도 상승"
+    elif best.score >= 50.0:
+        verdict = "참고용 국지 정밀도 신호"
     else:
         verdict = "약한 단기 정밀도 신호(참고용)"
     return best.score, filtered, verdict
@@ -1272,8 +1309,11 @@ def calculate_cheat_probability(moves) -> Tuple[float, float, str]:
     partial_prob, p_verdict, s_range = calculate_partial_ai_probability(moves)
     segment_partial_prob = partial_prob
     tactical_prob, tactical_bursts, tactical_verdict = calculate_tactical_burst(moves)
-    if tactical_prob >= 80.0:
-        partial_prob = max(partial_prob, tactical_prob)
+    global_support = max(final_full_prob, segment_partial_prob)
+    if tactical_prob >= 70.0 and global_support >= 50.0:
+        # Tactical bursts are supporting evidence only; they cannot create a high
+        # partial verdict when the rest of the game is statistically ordinary.
+        partial_prob = max(partial_prob, min(75.0, global_support + min(10.0, (tactical_prob - 70.0) / 2.0)))
 
     final_verdict = ""
     if centaur_prob >= 65.0 and centaur_prob >= full_prob:
@@ -1281,9 +1321,6 @@ def calculate_cheat_probability(moves) -> Tuple[float, float, str]:
         if not flag_str: flag_str = "통계적 특이 지표 다수"
         spike_info = f" [의심 구간: {s_range[0]}~{s_range[1]}수]" if segment_partial_prob >= 65.0 else ""
         final_verdict = f"🟡 [스마트 치팅 감지] 안전수 위장 속 부분적 AI 개입 발견 ({flag_str}){spike_info}"
-    elif tactical_prob >= 80.0 and tactical_bursts and tactical_prob > final_full_prob + 10.0:
-        tb = tactical_bursts[0]
-        final_verdict = f"🟡 [전술 버스트 감지] {tactical_verdict} [의심 구간: {tb.start_ply}~{tb.end_ply}수]"
     elif partial_prob > final_full_prob + 10.0 and partial_prob >= 65.0:
         final_verdict = f"{p_verdict} [의심 구간: {s_range[0]}~{s_range[1]}수]"
     else:
@@ -1313,8 +1350,8 @@ def format_tactical_burst_cell(score: float, bursts: List[TacticalBurstResult]) 
     return f"{score:.1f}% / {best.start_ply}~{best.end_ply}수"
 
 def print_tactical_burst_details(rows: List[Tuple[str, float, List[TacticalBurstResult], str]]) -> None:
-    print("\n [ 단기 전술 버스트 감지 (3~6수, 비강제·난전 한정) ]")
-    header = f" {pad_korean('진영', 12)} | {pad_korean('버스트 점수/구간', 22)} | {pad_korean('핵심 근거', 58)}"
+    print("\n [ 단기 전술 버스트 참고 지표 (3~6수, 비강제·난전 한정) ]")
+    header = f" {pad_korean('진영', 12)} | {pad_korean('참고 점수/구간', 22)} | {pad_korean('검토 근거', 58)}"
     print(header)
     print("-" * 105)
     for name, score, bursts, verdict in rows:
@@ -1574,7 +1611,7 @@ def print_target_report(target_moves: List[HistoryEntry], opp_moves: List[Histor
     print("1. 승부처 일치율(Critical Match): 누구나 맞추는 당연한 수를 제외하고, 복잡한 난전에서 1위 수와")
     print("   일치하는 비율입니다. 최고수 프로 기사도 이 수치가 지속적으로 60%를 넘기기는 매우 어렵습니다.")
     print("2. 스파이크 감지(Spike Detection): 게임 전체 평균은 15~20 수준의 보편적 수치인데, 특정 위기 상황 등")
-    print("   특정 10수 구간이나 3~6수 전술 버스트에서 ACPL이 5 이하로 떨어지는 기계적 패턴이 관찰된다면 국지적 AI 참고 가능성이 시사됩니다.")
+    print("   특정 10수 구간이나 3~6수 전술 버스트에서 주변 흐름과 다른 정밀도 상승이 반복될 때만 참고 신호로 봅니다.")
     print("3. 난이도 대비 정확도(Complexity Accuracy): 인간은 포지션이 복잡할수록 보통 정확도가 하락하지만,")
     print("   AI는 복잡성에 관계없이 항시 1위 수를 찾아냅니다. 어려운 포지션 일치율이 60%를 상회하면 유의미한 수치입니다.")
     print("4. 비대칭 분포 및 방어 회복: 누적 치명적실수(Blunder)는 0인데 의문수만 유독 많거나, 큰 실수를 한 직후")
@@ -1708,7 +1745,7 @@ def print_single_report(cho_moves: List[HistoryEntry], han_moves: List[HistoryEn
     print("1. 인간 최고수는 보통 편차(Variance)가 25~40 수준을 기록하지만, AI는 10~20대의 극단적 안정성을 보입니다.")
     print("   기복(편차) 지표가 15 미만으로 이례적으로 낮다면 전반적인 기계적 일관성 여부를 검토해볼 수 있습니다.")
     print("2. 구간별/스파이크 분석에서, 복잡한 '중반(Midgame)'의 손실이 한 자릿수를 기록하거나 특정 10수 구간 또는 3~6수 전술 버스트가")
-    print("   기계처럼 완벽하다면 난전 구간에서의 집중적인 AI 추천수 일치 패턴일 가능성이 있습니다.")
+    print("   주변 흐름보다 뚜렷하게 정밀하다면 난전 구간 검토용 참고 신호로만 해석합니다.")
     print("3. 큰 실수 직후 회복: 치명적인 실수를 한 직후 인간 특유의 연속 실수 없이 갑자기 완벽에 가까운 3수(ACPL<10)를")
     print("   찾아낸다면, 위기 상황에서 외부의 통계적/기계적 도움과 일치하는 흐름으로 해석될 수 있습니다.")
     print("="*105)
