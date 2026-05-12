@@ -306,6 +306,25 @@ class HistoryEntry:
     eval_gap: int
     start_fen: Optional[str] = None
     uci_history: List[str] = None
+    game_id: int = 0
+
+@dataclass
+class TacticalBurstResult:
+    score: float
+    start_ply: int
+    end_ply: int
+    game_id: int
+    move_count: int
+    acpl: float
+    rank_match: float
+    top1_rate: float
+    std_dev: float
+    baseline_acpl: float
+    baseline_rank: float
+    hard_count: int
+    swing_count: int
+    recovery_count: int
+    commentary: str
 
 def to_fs_uci(uci_0: str) -> str:
     m = re.match(r"^([a-i])(\d+)([a-i])(\d+)$", uci_0)
@@ -714,7 +733,7 @@ def tokenize_pgn_moves(text: str) -> List[str]:
         if clean: tokens.append(clean)
     return tokens
 
-def analyze_game(engine_path: Path, pgn_text: str, depth: Optional[int], nodes: Optional[int], nnue_path: Optional[str], aux_nnues: List[str], use_nnue: bool, threads: int, log_prefix: str = "") -> List[HistoryEntry]:
+def analyze_game(engine_path: Path, pgn_text: str, depth: Optional[int], nodes: Optional[int], nnue_path: Optional[str], aux_nnues: List[str], use_nnue: bool, threads: int, log_prefix: str = "", game_id: int = 0) -> List[HistoryEntry]:
     board = JanggiBoard()
     engine = EngineSession(engine_path, depth, nodes, nnue_path, use_nnue, threads)
     
@@ -805,7 +824,7 @@ def analyze_game(engine_path: Path, pgn_text: str, depth: Optional[int], nodes: 
                 is_top_3=(actual_uci in top_ucis),
                 eval_loss=loss, current_eval=actual_score,
                 is_critical=is_critical, is_forced=is_forced, eval_gap=eval_gap,
-                start_fen=start_fen, uci_history=list(uci_moves)
+                start_fen=start_fen, uci_history=list(uci_moves), game_id=game_id
             ))
             
             uci_moves.append(actual_uci)
@@ -885,39 +904,176 @@ def calc_advanced_stats(moves: List[HistoryEntry]) -> Tuple[Optional[float], Opt
 
     return min_window_acpl, hard_top1, recovery_rate, hard_count
 
-def calc_advanced_stats(moves: List[HistoryEntry]) -> Tuple[Optional[float], Optional[float], Optional[float], int]:
-    unforced = [m for m in moves if not m.is_forced]
-    mid_late_unforced = [m for m in unforced if m.ply >= 12]
-    
-    window_size = 10 
-    min_window_acpl = None
-    if len(mid_late_unforced) >= window_size:
-        min_acpl = 999.0
-        for i in range(len(mid_late_unforced) - window_size + 1):
-            window = mid_late_unforced[i:i+window_size]
-            w_acpl = sum(m.eval_loss for m in window) / window_size
-            if w_acpl < min_acpl:
-                min_acpl = w_acpl
-        min_window_acpl = min_acpl
+def _rank_weighted_match(move: HistoryEntry) -> float:
+    """Janggi-safe rank score: Top-1 matters most; raw Top-3 is intentionally discounted."""
+    if move.uci == move.best_move:
+        return 1.0
+    if move.uci in move.top_3_moves:
+        rank = move.top_3_moves.index(move.uci)
+        if rank == 1:
+            return 0.45
+        if rank == 2:
+            return 0.20
+    return 0.0
 
-    hard_moves = [m for m in unforced if m.eval_gap <= 50 and abs(m.current_eval) < 1500]
-    hard_count = len(hard_moves)
-    hard_top1 = (sum(1 for m in hard_moves if m.is_top_1) / hard_count * 100) if hard_count > 0 else None
+def calculate_tactical_burst(moves: List[HistoryEntry]) -> Tuple[float, List[TacticalBurstResult], str]:
+    """
+    Conservative detector for short Janggi tactical/rescue bursts.
+    It only inspects same-game, non-forced, hard/critical moves and uses rank-weighted
+    matching so naturally inflated Janggi Top-3 rates do not dominate the score.
+    """
+    if len(moves) < 6:
+        return 0.0, [], "데이터 부족"
 
-    recovery_score = 0
-    blunder_count = 0
-    for i, m in enumerate(moves):
-        if m.eval_loss >= 200:
-            next_moves = moves[i+1:i+4]
-            if len(next_moves) == 3:
-                blunder_count += 1
-                recovery_acpl = sum(nx.eval_loss for nx in next_moves) / 3
-                if recovery_acpl <= 10:
-                    recovery_score += 1
-    
-    recovery_rate = (recovery_score / blunder_count * 100) if blunder_count > 0 else None
+    def clamp_map(val, in_min, in_max, out_min, out_max):
+        if in_min < in_max:
+            if val <= in_min: return out_min
+            if val >= in_max: return out_max
+            return out_min + (val - in_min) * (out_max - out_min) / (in_max - in_min)
+        else:
+            if val >= in_min: return out_min
+            if val <= in_max: return out_max
+            return out_min + (in_min - val) * (out_max - out_min) / (in_min - in_max)
 
-    return min_window_acpl, hard_top1, recovery_rate, hard_count
+    by_game: Dict[int, List[HistoryEntry]] = {}
+    for m in sorted(moves, key=lambda x: (x.game_id, x.ply)):
+        by_game.setdefault(m.game_id, []).append(m)
+
+    scored: List[TacticalBurstResult] = []
+
+    for game_id, game_moves in by_game.items():
+        unforced = [m for m in game_moves if not m.is_forced]
+        if len(unforced) < 6:
+            continue
+
+        baseline_losses = [m.eval_loss for m in unforced]
+        baseline_acpl_all = sum(baseline_losses) / len(baseline_losses)
+        baseline_rank_all = sum(_rank_weighted_match(m) for m in unforced) / len(unforced)
+        baseline_std_all = math.sqrt(sum((x - baseline_acpl_all) ** 2 for x in baseline_losses) / len(baseline_losses))
+
+        difficult = []
+        for m in game_moves:
+            if m.is_forced or m.ply < 12 or abs(m.current_eval) >= 1800:
+                continue
+            is_hard = m.eval_gap <= 80
+            is_tactical_close = m.is_critical and m.eval_gap <= 120
+            is_clean_hard_hit = m.eval_loss <= 5 and m.eval_gap <= 120
+            if not (is_hard or is_tactical_close or is_clean_hard_hit):
+                continue
+            difficult.append(m)
+
+        for size in range(3, 7):
+            if len(difficult) < size:
+                continue
+            for start in range(len(difficult) - size + 1):
+                window = difficult[start:start + size]
+                if window[-1].ply - window[0].ply > 18:
+                    continue
+
+                losses = [m.eval_loss for m in window]
+                w_acpl = sum(losses) / size
+                w_rank = sum(_rank_weighted_match(m) for m in window) / size
+                w_top1 = sum(1 for m in window if m.is_top_1) / size * 100
+                w_std = math.sqrt(sum((x - w_acpl) ** 2 for x in losses) / size)
+                hard_count = sum(1 for m in window if m.eval_gap <= 50 or m.is_critical)
+                if hard_count < max(2, size - 1):
+                    continue
+
+                outside = [m for m in unforced if not (window[0].ply <= m.ply <= window[-1].ply)]
+                if len(outside) >= 4:
+                    out_losses = [m.eval_loss for m in outside]
+                    baseline_acpl = sum(out_losses) / len(out_losses)
+                    baseline_rank = sum(_rank_weighted_match(m) for m in outside) / len(outside)
+                    baseline_std = math.sqrt(sum((x - baseline_acpl) ** 2 for x in out_losses) / len(out_losses))
+                else:
+                    baseline_acpl = baseline_acpl_all
+                    baseline_rank = baseline_rank_all
+                    baseline_std = baseline_std_all
+
+                swing_count = 0
+                recovery_count = 0
+                for m in window:
+                    prev_candidates = [pm for pm in game_moves if pm.ply < m.ply]
+                    prev = prev_candidates[-1] if prev_candidates else None
+                    if prev:
+                        if abs(m.current_eval - prev.current_eval) >= 300:
+                            swing_count += 1
+                        if prev.eval_loss >= 200:
+                            recovery_count += 1
+
+                acpl_component = clamp_map(w_acpl, 8.0, 1.5, 0.0, 38.0)
+                rank_component = clamp_map(w_rank, 0.70, 0.95, 0.0, 32.0)
+                top1_component = clamp_map(w_top1, 50.0, 83.0, 0.0, 12.0)
+                improvement_component = clamp_map(baseline_acpl - w_acpl, 12.0, 45.0, 0.0, 12.0)
+                consistency_component = clamp_map(baseline_std - w_std, 8.0, 35.0, 0.0, 6.0)
+                context_component = min(10.0, swing_count * 4.0 + recovery_count * 5.0)
+
+                raw_score = acpl_component + rank_component + top1_component + improvement_component + consistency_component + context_component
+
+                if baseline_acpl <= 14.0 and baseline_rank >= 0.72:
+                    raw_score *= 0.70
+                if w_acpl > 6.0 or w_rank < 0.72:
+                    raw_score *= 0.55
+                if hard_count < size:
+                    raw_score *= 0.85
+                if size == 3 and not (swing_count or recovery_count) and w_top1 < 67.0:
+                    raw_score *= 0.70
+                if w_std > 10.0:
+                    raw_score *= 0.75
+
+                score = min(99.0, max(0.0, raw_score))
+                if score < 45.0:
+                    continue
+
+                reasons = []
+                if w_acpl <= 4.0: reasons.append(f"단기 ACPL {w_acpl:.1f}")
+                if w_rank >= 0.85: reasons.append(f"순위가중 일치 {w_rank*100:.0f}%")
+                if baseline_acpl - w_acpl >= 15.0: reasons.append(f"주변 대비 손실 {baseline_acpl - w_acpl:.1f} 감소")
+                if swing_count: reasons.append(f"평가 급변 후 정밀수 {swing_count}회")
+                if recovery_count: reasons.append(f"실수 직후 복구 {recovery_count}회")
+                if not reasons: reasons.append("난해한 비강제 수순의 단기 정밀도 상승")
+
+                scored.append(TacticalBurstResult(
+                    score=score,
+                    start_ply=window[0].ply + 1,
+                    end_ply=window[-1].ply + 1,
+                    game_id=game_id,
+                    move_count=size,
+                    acpl=w_acpl,
+                    rank_match=w_rank * 100,
+                    top1_rate=w_top1,
+                    std_dev=w_std,
+                    baseline_acpl=baseline_acpl,
+                    baseline_rank=baseline_rank * 100,
+                    hard_count=hard_count,
+                    swing_count=swing_count,
+                    recovery_count=recovery_count,
+                    commentary=", ".join(reasons)
+                ))
+
+    scored.sort(key=lambda b: b.score, reverse=True)
+    filtered: List[TacticalBurstResult] = []
+    for burst in scored:
+        overlaps = any(
+            burst.game_id == kept.game_id and not (burst.end_ply < kept.start_ply or burst.start_ply > kept.end_ply)
+            for kept in filtered
+        )
+        if not overlaps:
+            filtered.append(burst)
+        if len(filtered) >= 3:
+            break
+
+    if not filtered:
+        return 0.0, [], "단기 전술 버스트 특이점 없음"
+
+    best = filtered[0]
+    if best.score >= 80.0:
+        verdict = "짧은 난전/구조 전환 구간에서 기계적 정밀도 상승"
+    elif best.score >= 65.0:
+        verdict = "검토가 필요한 단기 정밀도 상승"
+    else:
+        verdict = "약한 단기 정밀도 신호(참고용)"
+    return best.score, filtered, verdict
 
 def calculate_partial_ai_probability(moves: List[HistoryEntry]) -> Tuple[float, str, List[int]]:
     valid_unforced = [m for m in moves if not m.is_forced and 20 <= m.ply <= 90]
@@ -930,8 +1086,6 @@ def calculate_partial_ai_probability(moves: List[HistoryEntry]) -> Tuple[float, 
         cleaned_unforced.append(m)
         
     window_size = 16  # 프로들의 강제/필연 수순을 고려해 검사 구간을 16수(8턴)로 늘림
-    if len(cleaned_unforced) < window_size:
-        return 0.0, "데이터 부족 (탐색 구간 짧음)", [0, 0]
 
     def clamp_map(val, in_min, in_max, out_min, out_max):
         if in_min < in_max:
@@ -945,24 +1099,36 @@ def calculate_partial_ai_probability(moves: List[HistoryEntry]) -> Tuple[float, 
 
     max_spike_score = 0.0
     suspect_range = [0, 0]
-    
-    for i in range(len(cleaned_unforced) - window_size + 1):
-        window = cleaned_unforced[i:i + window_size]
-        w_acpl = sum(m.eval_loss for m in window) / window_size
-        w_top1 = (sum(1 for m in window if m.is_top_1) / window_size) * 100
-        
-        mistakes = sum(1 for m in window if m.eval_loss >= 100)
-        inaccs = sum(1 for m in window if m.eval_loss >= 50)
-        
-        # 프로 컷 상향: ACPL이 7점 이하, Top-1이 65% 이상일 때만 점수가 오르기 시작함
-        acpl_score = clamp_map(w_acpl, 7.0, 1.5, 0.0, 60.0) 
-        top1_score = clamp_map(w_top1, 65.0, 90.0, 0.0, 40.0) 
-        err_penalty = (mistakes * 20.0) + (inaccs * 10.0)
-        
-        current_spike = max(0.0, acpl_score + top1_score - err_penalty)
-        if current_spike > max_spike_score:
-            max_spike_score = current_spike
-            suspect_range = [window[0].ply + 1, window[-1].ply + 1]
+    checked_windows = 0
+
+    by_game: Dict[int, List[HistoryEntry]] = {}
+    for m in cleaned_unforced:
+        by_game.setdefault(m.game_id, []).append(m)
+
+    for game_moves in by_game.values():
+        if len(game_moves) < window_size:
+            continue
+        for i in range(len(game_moves) - window_size + 1):
+            window = game_moves[i:i + window_size]
+            checked_windows += 1
+            w_acpl = sum(m.eval_loss for m in window) / window_size
+            w_top1 = (sum(1 for m in window if m.is_top_1) / window_size) * 100
+
+            mistakes = sum(1 for m in window if m.eval_loss >= 100)
+            inaccs = sum(1 for m in window if m.eval_loss >= 50)
+
+            # 프로 컷 상향: ACPL이 7점 이하, Top-1이 65% 이상일 때만 점수가 오르기 시작함
+            acpl_score = clamp_map(w_acpl, 7.0, 1.5, 0.0, 60.0)
+            top1_score = clamp_map(w_top1, 65.0, 90.0, 0.0, 40.0)
+            err_penalty = (mistakes * 20.0) + (inaccs * 10.0)
+
+            current_spike = max(0.0, acpl_score + top1_score - err_penalty)
+            if current_spike > max_spike_score:
+                max_spike_score = current_spike
+                suspect_range = [window[0].ply + 1, window[-1].ply + 1]
+
+    if checked_windows == 0:
+        return 0.0, "데이터 부족 (탐색 구간 짧음)", [0, 0]
 
     # [수정된 프로 기사 보호막 (Pro-Dampener)]
     # 프로 수준의 편차(15~35)를 가지면 스파이크 점수를 대폭 깎아줍니다.
@@ -1104,13 +1270,20 @@ def calculate_cheat_probability(moves) -> Tuple[float, float, str]:
     final_full_prob = min(99.0, max(0.0, final_full_prob))
 
     partial_prob, p_verdict, s_range = calculate_partial_ai_probability(moves)
+    segment_partial_prob = partial_prob
+    tactical_prob, tactical_bursts, tactical_verdict = calculate_tactical_burst(moves)
+    if tactical_prob >= 80.0:
+        partial_prob = max(partial_prob, tactical_prob)
 
     final_verdict = ""
     if centaur_prob >= 65.0 and centaur_prob >= full_prob:
         flag_str = ", ".join(centaur_flags[:2])
         if not flag_str: flag_str = "통계적 특이 지표 다수"
-        spike_info = f" [의심 구간: {s_range[0]}~{s_range[1]}수]" if partial_prob >= 65.0 else ""
+        spike_info = f" [의심 구간: {s_range[0]}~{s_range[1]}수]" if segment_partial_prob >= 65.0 else ""
         final_verdict = f"🟡 [스마트 치팅 감지] 안전수 위장 속 부분적 AI 개입 발견 ({flag_str}){spike_info}"
+    elif tactical_prob >= 80.0 and tactical_bursts and tactical_prob > final_full_prob + 10.0:
+        tb = tactical_bursts[0]
+        final_verdict = f"🟡 [전술 버스트 감지] {tactical_verdict} [의심 구간: {tb.start_ply}~{tb.end_ply}수]"
     elif partial_prob > final_full_prob + 10.0 and partial_prob >= 65.0:
         final_verdict = f"{p_verdict} [의심 구간: {s_range[0]}~{s_range[1]}수]"
     else:
@@ -1120,70 +1293,6 @@ def calculate_cheat_probability(moves) -> Tuple[float, float, str]:
         else: final_verdict = "🟢 보편적인 인간 대국자의 흐름 및 편차"
 
     return final_full_prob, partial_prob, final_verdict
-
-def print_single_report(cho_moves, han_moves, stage_name, cho_name, han_name, use_db, search_config):
-    c_stats = calc_stats(cho_moves)
-    h_stats = calc_stats(han_moves)
-    
-    c_adv = calc_advanced_stats(cho_moves)
-    h_adv = calc_advanced_stats(han_moves)
-
-    c_full, c_part, c_verdict = calculate_cheat_probability(cho_moves)
-    h_full, h_part, h_verdict = calculate_cheat_probability(han_moves)
-
-    def format_phase(moves, start, end):
-        val = get_numeric_phase_acpl(moves, start, end)
-        return f"{val:.1f}" if val is not None else "-"
-
-    print("\n" + "="*105)
-    print(pad_korean(f"장기 기보 AI 유사도 프로파일링 리포트 (단일 기보) - {stage_name}", 105))
-    print("="*105)
-
-    print(f"\n [ 핵심 지표 (강제수 필터링 적용) ]")
-    header = f" {pad_korean('진영', 10)} | {pad_korean('전체ACPL', 11)} | {pad_korean('비강제ACPL', 12)} | {pad_korean('편차(기복)', 11)} | {pad_korean('전체Top-3', 11)} | {pad_korean('비강제Top-1', 12)} | {pad_korean('난전Top-1', 11)}"
-    print(header)
-    print("-" * 105)
-    for name, s in [("초(Red)", c_stats), ("한(Grn)", h_stats)]:
-        row = f" {pad_korean(name, 10)} | {s[0]:11.2f} | {s[10]:12.2f} | {s[7]:11.2f} | {pad_korean(f'{s[2]:.1f}%', 11)} | {pad_korean(f'{s[9]:.1f}%', 12)} | {pad_korean(f'{s[8]:.1f}%', 11)}"
-        print(row)
-
-    print("\n [ 세분화된 수순 평가 ]")
-    header2 = f" {pad_korean('진영', 10)} | {pad_korean('완벽수(≤5cp)', 14)} | {pad_korean('의문수(50~99)', 14)} | {pad_korean('일반실수(100~199)', 14)} | {pad_korean('치명적실수(≥200)', 14)}"
-    print(header2)
-    print("-" * 105)
-    for name, s in [("초(Red)", c_stats), ("한(Grn)", h_stats)]:
-        row = f" {pad_korean(name, 10)} | {pad_korean(f'{s[3]} 회', 14)} | {pad_korean(f'{s[4]} 회', 14)} | {pad_korean(f'{s[5]} 회', 14)} | {pad_korean(f'{s[6]} 회', 14)}"
-        print(row)
-
-    print("\n [ 구간별 점수 손실 (Phase Analysis) ] *(후반부 AI 평가치 변동 보정용)*")
-    header3 = f" {pad_korean('진영', 10)} | {pad_korean('초반 (1~30수)', 25)} | {pad_korean('중반 (31~70수)', 25)} | {pad_korean('종반 (71수 이후)', 25)}"
-    print(header3)
-    print("-" * 105)
-    for name, m in [("초(Red)", cho_moves), ("한(Grn)", han_moves)]:
-        row = f" {pad_korean(name, 10)} | {pad_korean(format_phase(m, 0, 29), 25)} | {pad_korean(format_phase(m, 30, 69), 25)} | {pad_korean(format_phase(m, 70, 999), 25)}"
-        print(row)
-
-    print("\n [ 특정 구간 AI 밀착도 심층 지표 ]")
-    header4 = f" {pad_korean('진영', 10)} | {pad_korean('최고성능구간(6수) ACPL', 26)} | {pad_korean('어려운 포지션(격차<50) Top-1', 30)} | {pad_korean('치명적실수 직후(3수) 회복률', 30)}"
-    print(header4)
-    print("-" * 105)
-    for name, a in [("초(Red)", c_adv), ("한(Grn)", h_adv)]:
-        row = f" {pad_korean(name, 10)} | {pad_korean(format_adv_metric(a[0]), 26)} | {pad_korean(format_adv_metric(a[1], True), 30)} | {pad_korean(format_adv_metric(a[2], True), 30)}"
-        print(row)
-
-    print("="*105)
-    print(pad_korean("[ 종합 판독 소견 (AI Similarity Verdict) ]", 105))
-    print("-" * 105)
-    print(f" {pad_korean('진영', 10)} | {pad_korean('전체 일치도', 18)} | {pad_korean('부분 돌출도', 18)} | 통계적 판독 결과")
-    print("-" * 105)
-    print(f" {pad_korean('초(Red)', 10)} | {pad_korean(f'{c_full:.1f}%', 18)} | {pad_korean(f'{c_part:.1f}%', 18)} | {c_verdict}")
-    print(f" {pad_korean('한(Grn)', 10)} | {pad_korean(f'{h_full:.1f}%', 18)} | {pad_korean(f'{h_part:.1f}%', 18)} | {h_verdict}")
-    print("="*105)
-    print("\n[ 판독 가이드 ]")
-    print("1. 전체 일치도: 봇(Bot) 또는 지능형 치팅(의도적인 Top-1 회피) 여부를 포괄하여 판독합니다.")
-    print("2. 부분 돌출도: 16수 이상의 구간에서 인간이 달성 불가능한 무결점 AI 일치 패턴을 탐지합니다.")
-    print("3. 종합 소견: 통계적 추정치이며, '100% 확정'을 의미하지 않으므로 다각도 분석의 참고용으로 활용하십시오.")
-    print("="*105)
 
 def pad_korean(s: str, width: int, align: str = "center") -> str:
     visual_width = sum(2 if ord(c) > 0x7F else 1 for c in s)
@@ -1196,6 +1305,27 @@ def pad_korean(s: str, width: int, align: str = "center") -> str:
 def format_adv_metric(val: Optional[float], is_percent: bool = False) -> str:
     if val is None: return "-"
     return f"{val:.1f}%" if is_percent else f"{val:.1f}"
+
+def format_tactical_burst_cell(score: float, bursts: List[TacticalBurstResult]) -> str:
+    if not bursts:
+        return f"{score:.1f}% / -"
+    best = bursts[0]
+    return f"{score:.1f}% / {best.start_ply}~{best.end_ply}수"
+
+def print_tactical_burst_details(rows: List[Tuple[str, float, List[TacticalBurstResult], str]]) -> None:
+    print("\n [ 단기 전술 버스트 감지 (3~6수, 비강제·난전 한정) ]")
+    header = f" {pad_korean('진영', 12)} | {pad_korean('버스트 점수/구간', 22)} | {pad_korean('핵심 근거', 58)}"
+    print(header)
+    print("-" * 105)
+    for name, score, bursts, verdict in rows:
+        if bursts:
+            best = bursts[0]
+            detail = f"{verdict} ({best.move_count}수, ACPL {best.acpl:.1f}, 순위가중 {best.rank_match:.0f}%, 주변ACPL {best.baseline_acpl:.1f})"
+        else:
+            detail = verdict
+        print(f" {pad_korean(name, 12)} | {pad_korean(format_tactical_burst_cell(score, bursts), 22)} | {detail}")
+        for extra in bursts[:2]:
+            print(f" {'':12} | {'':22} | ↳ G{extra.game_id} {extra.start_ply}~{extra.end_ply}수: {extra.commentary}")
 
 def run_files_analysis(inputs, engine_path, depth, nodes, nnue_path, aux_nnues, use_nnue, threads, is_single_no_target, log_prefix=""):
     cho_moves_all = []
@@ -1214,7 +1344,7 @@ def run_files_analysis(inputs, engine_path, depth, nodes, nnue_path, aux_nnues, 
         input_text = Path(file_path).read_text(encoding="utf-8")
         if i == 1: white_name, black_name = extract_player_names(input_text)
         
-        game_history = analyze_game(engine_path, input_text, depth, nodes, nnue_path, aux_nnues, use_nnue, threads, log_prefix)
+        game_history = analyze_game(engine_path, input_text, depth, nodes, nnue_path, aux_nnues, use_nnue, threads, log_prefix, game_id=i)
         
         if is_single_no_target:
             cho_moves_all.extend([h for h in game_history if h.ply % 2 == 0])
@@ -1375,6 +1505,8 @@ def print_target_report(target_moves: List[HistoryEntry], opp_moves: List[Histor
 
     t_fprob, t_pprob, t_verdict = calculate_cheat_probability(target_moves)
     o_fprob, o_pprob, o_verdict = calculate_cheat_probability(opp_moves)
+    t_burst_score, t_bursts, t_burst_verdict = calculate_tactical_burst(target_moves)
+    o_burst_score, o_bursts, o_burst_verdict = calculate_tactical_burst(opp_moves)
 
     def format_phase(moves, start, end):
         val = get_numeric_phase_acpl(moves, start, end)
@@ -1410,12 +1542,17 @@ def print_target_report(target_moves: List[HistoryEntry], opp_moves: List[Histor
         print(row)
 
     print("\n [ 특정 구간 AI 밀착도 심층 지표 ]")
-    header4 = f" {pad_korean('진영', 12)} | {pad_korean('최고성능구간(6수) ACPL', 26)} | {pad_korean('어려운 포지션(격차<50) Top-1', 30)} | {pad_korean('치명적실수 직후(3수) 회복률', 30)}"
+    header4 = f" {pad_korean('진영', 12)} | {pad_korean('최고성능구간(10수) ACPL', 26)} | {pad_korean('어려운 포지션(격차<50) Top-1', 30)} | {pad_korean('치명적실수 직후(3수) 회복률', 30)}"
     print(header4)
     print("-" * 105)
     for name, a in [("타겟(분석)", t_adv), ("상대방(평균)", o_adv)]:
         row = f" {pad_korean(name, 12)} | {pad_korean(format_adv_metric(a[0]), 26)} | {pad_korean(format_adv_metric(a[1], True), 30)} | {pad_korean(format_adv_metric(a[2], True), 30)}"
         print(row)
+
+    print_tactical_burst_details([
+        ("타겟(분석)", t_burst_score, t_bursts, t_burst_verdict),
+        ("상대방(평균)", o_burst_score, o_bursts, o_burst_verdict),
+    ])
 
     print("="*105)
     print(pad_korean("[ 종합 참고 소견 (Reference Verdict) ]", 105))
@@ -1429,7 +1566,7 @@ def print_target_report(target_moves: List[HistoryEntry], opp_moves: List[Histor
     print("\n[ 용어 설명 ]")
     print("■ 비강제수: 누구나 둬야 하는 뻔한 강제수(유일수 등)를 제외하고, 다양한 선택의 여지가 있는 수순입니다.")
     print("■ 난전 Top-1: 국면이 팽팽한 복잡한 상황(1~2순위 수 격차가 적은 경우)에서의 AI 1위수 일치율입니다.")
-    print("■ 최고성능구간 ACPL: 비강제수 6수 단위로 쪼갰을 때 가장 점수 손실이 적었던(가장 AI와 유사했던) 구간의 평균 손실입니다.")
+    print("■ 최고성능구간 ACPL: 비강제수 10수 단위로 쪼갰을 때 가장 점수 손실이 적었던(가장 AI와 유사했던) 구간의 평균 손실입니다.")
     print("■ 어려운 포지션 Top-1: AI 1위수와 2위수의 평가값 격차가 50 이하인 매우 난해한 승부처에서의 1위수 일치율입니다.")
     print("■ 치명적실수 직후 회복률: 200 이상 손해를 본 큰 실수 직후의 다음 3수가 완벽한 방어 수준(손실 10 이하)을 기록한 빈도입니다.")
     print("\n[ AI 유사도 분석 결과 해석 가이드라인 ]")
@@ -1437,7 +1574,7 @@ def print_target_report(target_moves: List[HistoryEntry], opp_moves: List[Histor
     print("1. 승부처 일치율(Critical Match): 누구나 맞추는 당연한 수를 제외하고, 복잡한 난전에서 1위 수와")
     print("   일치하는 비율입니다. 최고수 프로 기사도 이 수치가 지속적으로 60%를 넘기기는 매우 어렵습니다.")
     print("2. 스파이크 감지(Spike Detection): 게임 전체 평균은 15~20 수준의 보편적 수치인데, 특정 위기 상황 등")
-    print("   특정 6수 구간에서만 ACPL이 5 이하로 떨어지는 기계적 패턴이 관찰된다면 국지적 AI 참고 가능성이 시사됩니다.")
+    print("   특정 10수 구간이나 3~6수 전술 버스트에서 ACPL이 5 이하로 떨어지는 기계적 패턴이 관찰된다면 국지적 AI 참고 가능성이 시사됩니다.")
     print("3. 난이도 대비 정확도(Complexity Accuracy): 인간은 포지션이 복잡할수록 보통 정확도가 하락하지만,")
     print("   AI는 복잡성에 관계없이 항시 1위 수를 찾아냅니다. 어려운 포지션 일치율이 60%를 상회하면 유의미한 수치입니다.")
     print("4. 비대칭 분포 및 방어 회복: 누적 치명적실수(Blunder)는 0인데 의문수만 유독 많거나, 큰 실수를 한 직후")
@@ -1456,6 +1593,8 @@ def print_single_report(cho_moves: List[HistoryEntry], han_moves: List[HistoryEn
     # 1차: 수학 공식 기반 확률 계산
     c_fprob, c_pprob, c_verdict = calculate_cheat_probability(cho_moves)
     h_fprob, h_pprob, h_verdict = calculate_cheat_probability(han_moves)
+    c_burst_score, c_bursts, c_burst_verdict = calculate_tactical_burst(cho_moves)
+    h_burst_score, h_bursts, h_burst_verdict = calculate_tactical_burst(han_moves)
 
     # 2차: DB 딥러닝 강제 보정 (Override)
     c_calib_full, c_calib_part, c_db_msg = calibrate_with_db(cho_name, c_fprob, c_pprob, c_stats, use_db, search_config)
@@ -1515,12 +1654,17 @@ def print_single_report(cho_moves: List[HistoryEntry], han_moves: List[HistoryEn
         print(row)
 
     print("\n [ 특정 구간 AI 밀착도 심층 지표 ]")
-    header4 = f" {pad_korean('진영', 10)} | {pad_korean('최고성능구간(6수) ACPL', 26)} | {pad_korean('어려운 포지션(격차<50) Top-1', 30)} | {pad_korean('치명적실수 직후(3수) 회복률', 30)}"
+    header4 = f" {pad_korean('진영', 10)} | {pad_korean('최고성능구간(10수) ACPL', 26)} | {pad_korean('어려운 포지션(격차<50) Top-1', 30)} | {pad_korean('치명적실수 직후(3수) 회복률', 30)}"
     print(header4)
     print("-" * 105)
     for name, a in [("초(Red)", c_adv), ("한(Grn)", h_adv)]:
         row = f" {pad_korean(name, 10)} | {pad_korean(format_adv_metric(a[0]), 26)} | {pad_korean(format_adv_metric(a[1], True), 30)} | {pad_korean(format_adv_metric(a[2], True), 30)}"
         print(row)
+
+    print_tactical_burst_details([
+        ("초(Red)", c_burst_score, c_bursts, c_burst_verdict),
+        ("한(Grn)", h_burst_score, h_bursts, h_burst_verdict),
+    ])
 
     print("="*105)
     print(pad_korean("[ 종합 참고 소견 (Reference Verdict) ]", 105))
@@ -1548,7 +1692,7 @@ def print_single_report(cho_moves: List[HistoryEntry], han_moves: List[HistoryEn
     print("\n[ 용어 설명 ]")
     print("■ 비강제수: 누구나 둬야 하는 뻔한 강제수(유일수 등)를 제외하고, 다양한 선택의 여지가 있는 수순입니다.")
     print("■ 난전 Top-1: 국면이 팽팽한 복잡한 상황(1~2순위 수 격차가 적은 경우)에서의 AI 1위수 일치율입니다.")
-    print("■ 최고성능구간 ACPL: 비강제수 6수 단위로 쪼갰을 때 가장 점수 손실이 적었던(가장 AI와 유사했던) 구간의 평균 손실입니다.")
+    print("■ 최고성능구간 ACPL: 비강제수 10수 단위로 쪼갰을 때 가장 점수 손실이 적었던(가장 AI와 유사했던) 구간의 평균 손실입니다.")
     print("■ 어려운 포지션 Top-1: AI 1위수와 2위수의 평가값 격차가 50 이하인 매우 난해한 승부처에서의 1위수 일치율입니다.")
     print("■ 치명적실수 직후 회복률: 200 이상 손해를 본 큰 실수 직후의 다음 3수가 완벽한 방어 수준(손실 10 이하)을 기록한 빈도입니다.")
     print("\n[ 장기 AI 유사도 판독 가이드라인 (전체 게임) ]")
@@ -1563,7 +1707,7 @@ def print_single_report(cho_moves: List[HistoryEntry], han_moves: List[HistoryEn
     print("\n[ 국지적 AI 밀착도 (Partial Match) 패턴 가이드라인 ]")
     print("1. 인간 최고수는 보통 편차(Variance)가 25~40 수준을 기록하지만, AI는 10~20대의 극단적 안정성을 보입니다.")
     print("   기복(편차) 지표가 15 미만으로 이례적으로 낮다면 전반적인 기계적 일관성 여부를 검토해볼 수 있습니다.")
-    print("2. 구간별/스파이크 분석에서, 복잡한 '중반(Midgame)'의 손실이 한 자릿수를 기록하거나 특정 6수 구간이")
+    print("2. 구간별/스파이크 분석에서, 복잡한 '중반(Midgame)'의 손실이 한 자릿수를 기록하거나 특정 10수 구간 또는 3~6수 전술 버스트가")
     print("   기계처럼 완벽하다면 난전 구간에서의 집중적인 AI 추천수 일치 패턴일 가능성이 있습니다.")
     print("3. 큰 실수 직후 회복: 치명적인 실수를 한 직후 인간 특유의 연속 실수 없이 갑자기 완벽에 가까운 3수(ACPL<10)를")
     print("   찾아낸다면, 위기 상황에서 외부의 통계적/기계적 도움과 일치하는 흐름으로 해석될 수 있습니다.")
@@ -1600,9 +1744,9 @@ def write_csv_log(filename: str, history: List[HistoryEntry]):
     try:
         with open(filename, 'w', newline='', encoding='utf-8-sig') as f:
             writer = csv.writer(f)
-            writer.writerow(['Ply', 'Move', 'Played_UCI', 'Best_UCI', 'Loss(cp)', 'Is_Forced', 'Is_Critical', 'Eval_Gap'])
+            writer.writerow(['Game_ID', 'Ply', 'Move', 'Played_UCI', 'Best_UCI', 'Loss(cp)', 'Is_Forced', 'Is_Critical', 'Eval_Gap', 'Rank_Weighted_Match'])
             for h in history:
-                writer.writerow([h.ply+1, h.san, h.uci, h.best_move, h.eval_loss, h.is_forced, h.is_critical, h.eval_gap])
+                writer.writerow([h.game_id, h.ply+1, h.san, h.uci, h.best_move, h.eval_loss, h.is_forced, h.is_critical, h.eval_gap, f'{_rank_weighted_match(h):.2f}'])
         print(f"\n[안내] 상세 분석 로그가 CSV 파일({filename})로 성공적으로 저장되었습니다.")
     except Exception as e:
         print(f"\n[오류] CSV 파일 저장 중 문제가 발생했습니다: {e}")
