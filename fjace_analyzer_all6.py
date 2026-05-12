@@ -954,14 +954,20 @@ def calculate_tactical_burst(moves: List[HistoryEntry]) -> Tuple[float, List[Tac
         baseline_rank_all = sum(_rank_weighted_match(m) for m in unforced) / len(unforced)
         baseline_std_all = math.sqrt(sum((x - baseline_acpl_all) ** 2 for x in baseline_losses) / len(baseline_losses))
 
-        def local_profile(local_moves: List[HistoryEntry]) -> Tuple[float, float, float]:
+        def local_profile(local_moves: List[HistoryEntry]) -> Tuple[float, float, float, float, float, float]:
             if not local_moves:
-                return baseline_acpl_all, baseline_rank_all, baseline_std_all
+                err_rate = sum(1 for x in baseline_losses if x >= 50) / len(baseline_losses)
+                severe_rate = sum(1 for x in baseline_losses if x >= 100) / len(baseline_losses)
+                preserve_rate = sum(1 for x in baseline_losses if x <= 35) / len(baseline_losses)
+                return baseline_acpl_all, baseline_rank_all, baseline_std_all, err_rate, severe_rate, preserve_rate
             local_losses = [x.eval_loss for x in local_moves]
             local_acpl = sum(local_losses) / len(local_losses)
             local_rank = sum(_rank_weighted_match(x) for x in local_moves) / len(local_moves)
             local_std = math.sqrt(sum((x - local_acpl) ** 2 for x in local_losses) / len(local_losses))
-            return local_acpl, local_rank, local_std
+            err_rate = sum(1 for x in local_losses if x >= 50) / len(local_losses)
+            severe_rate = sum(1 for x in local_losses if x >= 100) / len(local_losses)
+            preserve_rate = sum(1 for x in local_losses if x <= 35) / len(local_losses)
+            return local_acpl, local_rank, local_std, err_rate, severe_rate, preserve_rate
 
         difficult = []
         for m in game_moves:
@@ -989,6 +995,10 @@ def calculate_tactical_burst(moves: List[HistoryEntry]) -> Tuple[float, List[Tac
                 w_rank = sum(_rank_weighted_match(m) for m in window) / size
                 w_top1 = sum(1 for m in window if m.is_top_1) / size * 100
                 w_std = math.sqrt(sum((x - w_acpl) ** 2 for x in losses) / size)
+                w_err_rate = sum(1 for x in losses if x >= 50) / size
+                w_severe_rate = sum(1 for x in losses if x >= 100) / size
+                w_preserve_rate = sum(1 for x in losses if x <= 35) / size
+                low_loss_count = sum(1 for x in losses if x <= 35)
                 hard_count = sum(1 for m in window if m.eval_gap <= 50 or (m.is_critical and m.eval_gap <= 90))
                 required_hard = size if size <= 4 else size - 1
                 if hard_count < required_hard:
@@ -1000,15 +1010,19 @@ def calculate_tactical_burst(moves: List[HistoryEntry]) -> Tuple[float, List[Tac
                     baseline_acpl = sum(out_losses) / len(out_losses)
                     baseline_rank = sum(_rank_weighted_match(m) for m in outside) / len(outside)
                     baseline_std = math.sqrt(sum((x - baseline_acpl) ** 2 for x in out_losses) / len(out_losses))
+                    baseline_err_rate = sum(1 for x in out_losses if x >= 50) / len(out_losses)
+                    baseline_severe_rate = sum(1 for x in out_losses if x >= 100) / len(out_losses)
+                    baseline_preserve_rate = sum(1 for x in out_losses if x <= 35) / len(out_losses)
                 else:
                     baseline_acpl = baseline_acpl_all
                     baseline_rank = baseline_rank_all
                     baseline_std = baseline_std_all
+                    _, _, _, baseline_err_rate, baseline_severe_rate, baseline_preserve_rate = local_profile([])
 
                 prev_context = [m for m in unforced if m.ply < window[0].ply][-6:]
                 next_context = [m for m in unforced if m.ply > window[-1].ply][:6]
-                prev_acpl, prev_rank, prev_std = local_profile(prev_context)
-                next_acpl, next_rank, next_std = local_profile(next_context)
+                prev_acpl, prev_rank, prev_std, prev_err_rate, prev_severe_rate, prev_preserve_rate = local_profile(prev_context)
+                next_acpl, next_rank, next_std, next_err_rate, next_severe_rate, next_preserve_rate = local_profile(next_context)
 
                 swing_count = 0
                 recovery_count = 0
@@ -1041,28 +1055,44 @@ def calculate_tactical_burst(moves: List[HistoryEntry]) -> Tuple[float, List[Tac
                 transition_gain = max(prev_gain, (prev_gain + max(0.0, next_gain)) / 2.0)
                 transition_rank_gain = max(prev_rank_gain, (prev_rank_gain + max(0.0, next_rank_gain)) / 2.0)
                 transition_std_gain = max(prev_std - w_std, (prev_std + next_std) / 2.0 - w_std)
-                safe_continuations = sum(1 for m in window if m.uci != m.best_move and _rank_weighted_match(m) >= 0.45 and m.eval_loss <= 90)
+                pressure_err_rate = max(prev_err_rate, (prev_err_rate + next_err_rate) / 2.0, baseline_err_rate)
+                pressure_severe_rate = max(prev_severe_rate, (prev_severe_rate + next_severe_rate) / 2.0, baseline_severe_rate)
+                preservation_jump = w_preserve_rate - max(prev_preserve_rate, baseline_preserve_rate)
+                error_suppression = max(0.0, pressure_err_rate - w_err_rate)
+                severe_suppression = max(0.0, pressure_severe_rate - w_severe_rate)
+                safe_continuations = sum(1 for m in window if m.uci != m.best_move and (m.eval_loss <= 35 or _rank_weighted_match(m) >= 0.45) and m.eval_loss <= 90)
                 has_context = bool(swing_count or recovery_count)
-                safe_mode = safe_continuations >= max(2, size - 2) and transition_gain >= 20.0
-                is_precision_island = (prev_gain >= 18.0 and next_gain >= 12.0 and transition_rank_gain >= 0.15) or (prev_gain >= 28.0 and has_context) or (safe_mode and prev_gain >= 20.0)
+                stability_mode = (low_loss_count >= max(2, size - 1) and error_suppression >= 0.25 and transition_gain >= 14.0)
+                safe_mode = (safe_continuations >= max(2, size - 2) and transition_gain >= 16.0) or (safe_continuations >= max(2, size - 2) and error_suppression >= 0.30)
+                is_precision_island = (
+                    (prev_gain >= 18.0 and next_gain >= 12.0 and (transition_rank_gain >= 0.15 or error_suppression >= 0.30))
+                    or (prev_gain >= 28.0 and has_context)
+                    or (safe_mode and prev_gain >= 16.0)
+                    or (stability_mode and next_gain >= 8.0)
+                )
 
-                # Perfect short windows are common in professional Janggi.  The score is
-                # therefore driven by decision-quality transitions and rarity, not ACPL 0 alone.
-                acpl_component = clamp_map(w_acpl, 6.0, 0.0, 0.0, 6.0)
-                improvement_component = clamp_map(relative_gain, 18.0, 60.0, 0.0, 24.0)
-                transition_component = clamp_map(transition_gain, 16.0, 55.0, 0.0, 26.0)
-                rank_component = clamp_map(rank_gain, 0.18, 0.50, 0.0, 12.0)
-                transition_rank_component = clamp_map(transition_rank_gain, 0.14, 0.45, 0.0, 16.0)
-                consistency_component = clamp_map(max(variance_gain, transition_std_gain), 12.0, 45.0, 0.0, 10.0)
-                safe_component = clamp_map(safe_continuations, 1, 4, 0.0, 18.0) if transition_gain >= 16.0 else 0.0
+                # Consultation users often preserve stability instead of finding Top-1.
+                # Score the temporary disappearance of expected human errors first, and
+                # treat engine-move agreement as secondary explanatory context.
+                acpl_component = clamp_map(w_acpl, 35.0, 4.0, 0.0, 8.0)
+                improvement_component = clamp_map(relative_gain, 18.0, 60.0, 0.0, 20.0)
+                transition_component = clamp_map(transition_gain, 14.0, 55.0, 0.0, 24.0)
+                error_component = clamp_map(error_suppression, 0.22, 0.70, 0.0, 22.0)
+                severe_component = clamp_map(severe_suppression, 0.12, 0.45, 0.0, 12.0)
+                preservation_component = clamp_map(preservation_jump, 0.20, 0.65, 0.0, 10.0)
+                rank_component = clamp_map(rank_gain, 0.18, 0.50, 0.0, 7.0)
+                transition_rank_component = clamp_map(transition_rank_gain, 0.14, 0.45, 0.0, 9.0)
+                consistency_component = clamp_map(max(variance_gain, transition_std_gain), 10.0, 45.0, 0.0, 12.0)
+                safe_component = clamp_map(safe_continuations, 1, 4, 0.0, 16.0) if (transition_gain >= 14.0 or error_suppression >= 0.25) else 0.0
                 context_component = min(12.0, swing_count * 5.0 + recovery_count * 6.0)
-                rarity_component = 8.0 if similar_count == 1 and relative_gain >= 22.0 else (4.0 if similar_count == 2 and transition_gain >= 24.0 else 0.0)
+                rarity_component = 8.0 if similar_count == 1 and (relative_gain >= 22.0 or error_suppression >= 0.30) else (4.0 if similar_count == 2 and transition_gain >= 24.0 else 0.0)
                 island_component = (12.0 if is_precision_island and size >= 5 else (7.0 if is_precision_island else 0.0))
 
                 raw_score = (
-                    acpl_component + improvement_component + transition_component + rank_component +
-                    transition_rank_component + consistency_component + safe_component +
-                    context_component + rarity_component + island_component
+                    acpl_component + improvement_component + transition_component +
+                    error_component + severe_component + preservation_component +
+                    rank_component + transition_rank_component + consistency_component +
+                    safe_component + context_component + rarity_component + island_component
                 )
 
                 length_weight = {3: 0.30, 4: 0.55, 5: 0.88, 6: 1.08}[size]
@@ -1079,15 +1109,15 @@ def calculate_tactical_burst(moves: List[HistoryEntry]) -> Tuple[float, List[Tac
                     raw_score *= 0.70
                 if similar_count >= 3 and not is_precision_island:
                     raw_score *= 0.65
-                if relative_gain < 15.0 and transition_gain < 18.0:
+                if relative_gain < 15.0 and transition_gain < 18.0 and error_suppression < 0.25:
                     raw_score *= 0.40
-                if rank_gain < 0.12 and transition_rank_gain < 0.14 and not has_context:
+                if rank_gain < 0.12 and transition_rank_gain < 0.14 and error_suppression < 0.30 and not has_context:
                     raw_score *= 0.55
-                if not safe_mode and (w_acpl > 6.0 or w_rank < 0.72):
+                if not safe_mode and not stability_mode and (w_acpl > 35.0 or (w_rank < 0.40 and w_preserve_rate < 0.70)):
                     raw_score *= 0.50
-                elif safe_mode and w_rank < 0.40:
+                elif safe_mode and w_rank < 0.25 and w_preserve_rate < 0.70:
                     raw_score *= 0.70
-                if w_std > 10.0:
+                if w_std > 12.0 and error_suppression < 0.30:
                     raw_score *= 0.70
 
                 cap = {3: 28.0, 4: 50.0, 5: 76.0, 6: 88.0}[size]
@@ -1095,27 +1125,33 @@ def calculate_tactical_burst(moves: List[HistoryEntry]) -> Tuple[float, List[Tac
                     cap += {3: 4.0, 4: 8.0, 5: 8.0, 6: 6.0}[size]
                 if has_context and transition_gain >= 25.0:
                     cap += {3: 4.0, 4: 6.0, 5: 6.0, 6: 4.0}[size]
-                if safe_mode:
+                if safe_mode or stability_mode:
                     cap = max(cap, 46.0 if size <= 4 else 66.0)
-                if transition_gain < 18.0 or (transition_rank_gain < 0.14 and not safe_mode):
+                if transition_gain < 18.0 and error_suppression < 0.30:
                     cap = min(cap, 34.0 if size <= 4 else 52.0)
+                if transition_rank_gain < 0.14 and not safe_mode and error_suppression < 0.30:
+                    cap = min(cap, 34.0 if size <= 4 else 56.0)
 
                 score = min(cap, max(0.0, raw_score))
                 if score < 35.0:
                     continue
 
-                transition_score = min(100.0, max(0.0, transition_component + transition_rank_component + consistency_component + island_component))
+                transition_score = min(100.0, max(0.0, transition_component + error_component + severe_component + preservation_component + consistency_component + island_component))
                 reasons = []
-                if w_acpl <= 4.0: reasons.append(f"단기 ACPL {w_acpl:.1f}")
+                if w_acpl <= 35.0 and error_suppression >= 0.25: reasons.append(f"위험구간 손실 억제(ACPL {w_acpl:.1f})")
+                elif w_acpl <= 4.0: reasons.append(f"단기 ACPL {w_acpl:.1f}")
+                if error_suppression >= 0.25: reasons.append(f"예상 실수율 {error_suppression*100:.0f}%p 감소")
+                if severe_suppression >= 0.12: reasons.append(f"큰 실수 억제 {severe_suppression*100:.0f}%p")
+                if preservation_jump >= 0.20: reasons.append(f"평가보존 수 증가 +{preservation_jump*100:.0f}%p")
                 if transition_gain >= 16.0: reasons.append(f"직전 흐름 대비 손실 {transition_gain:.1f} 개선")
                 if transition_rank_gain >= 0.14: reasons.append(f"직전 대비 순위가중 +{transition_rank_gain*100:.0f}%")
-                if is_precision_island: reasons.append("일시적 정밀도 섬")
-                if safe_continuations >= 2: reasons.append(f"Top-1 회피 엔진권 후보 {safe_continuations}회")
+                if is_precision_island: reasons.append("일시적 안정화 섬")
+                if safe_continuations >= 2: reasons.append(f"Top-1 회피 안전후보 {safe_continuations}회")
                 if variance_gain >= 12.0 or transition_std_gain >= 12.0: reasons.append(f"단기 편차 {w_std:.1f}로 수렴")
-                if similar_count <= 2: reasons.append("게임 내 드문 정밀 구간")
-                if swing_count: reasons.append(f"평가 급변 후 정밀수 {swing_count}회")
+                if similar_count <= 2: reasons.append("게임 내 드문 안정 구간")
+                if swing_count: reasons.append(f"평가 급변 후 안정수 {swing_count}회")
                 if recovery_count: reasons.append(f"실수 직후 복구 {recovery_count}회")
-                if not reasons: reasons.append("검토용 국지 정밀도 상승")
+                if not reasons: reasons.append("검토용 국지 안정화")
 
                 scored.append(TacticalBurstResult(
                     score=score,
