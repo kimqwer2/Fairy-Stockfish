@@ -1062,18 +1062,25 @@ def calculate_tactical_burst(moves: List[HistoryEntry]) -> Tuple[float, List[Tac
                 severe_suppression = max(0.0, pressure_severe_rate - w_severe_rate)
                 safe_continuations = sum(1 for m in window if m.uci != m.best_move and (m.eval_loss <= 35 or _rank_weighted_match(m) >= 0.45) and m.eval_loss <= 90)
                 has_context = bool(swing_count or recovery_count)
+                collapse_pressure = min(1.0,
+                    (pressure_err_rate * 0.35) +
+                    (pressure_severe_rate * 0.30) +
+                    ((hard_count / size) * 0.20) +
+                    (min(1.0, max(prev_std, baseline_std) / 60.0) * 0.10) +
+                    (0.05 if has_context else 0.0)
+                )
                 stability_mode = (low_loss_count >= max(2, size - 1) and error_suppression >= 0.25 and transition_gain >= 14.0)
                 safe_mode = (safe_continuations >= max(2, size - 2) and transition_gain >= 16.0) or (safe_continuations >= max(2, size - 2) and error_suppression >= 0.30)
                 is_precision_island = (
-                    (prev_gain >= 18.0 and next_gain >= 12.0 and (transition_rank_gain >= 0.15 or error_suppression >= 0.30))
-                    or (prev_gain >= 28.0 and has_context)
-                    or (safe_mode and prev_gain >= 16.0)
-                    or (stability_mode and next_gain >= 8.0 and transition_rank_gain >= 0.20)
+                    (prev_gain >= 18.0 and next_gain >= 12.0 and transition_rank_gain >= 0.20)
+                    or (prev_gain >= 28.0 and has_context and transition_rank_gain >= 0.14)
+                    or (safe_mode and prev_gain >= 16.0 and rank_gain >= 0.20)
+                    or (stability_mode and next_gain >= 8.0 and transition_rank_gain >= 0.22)
                 )
 
-                # Consultation users often preserve stability instead of finding Top-1.
-                # Score the temporary disappearance of expected human errors first, and
-                # treat engine-move agreement as secondary explanatory context.
+                # Normal Janggi focus often stabilizes a position.  This block only scores
+                # unusual resistance to collapse under high pressure, with stabilization
+                # treated as weak context rather than evidence by itself.
                 acpl_component = clamp_map(w_acpl, 35.0, 4.0, 0.0, 8.0)
                 improvement_component = clamp_map(relative_gain, 18.0, 60.0, 0.0, 20.0)
                 transition_component = clamp_map(transition_gain, 14.0, 55.0, 0.0, 24.0)
@@ -1089,30 +1096,40 @@ def calculate_tactical_burst(moves: List[HistoryEntry]) -> Tuple[float, List[Tac
                 island_component = (12.0 if is_precision_island and size >= 5 else (7.0 if is_precision_island else 0.0))
 
                 globally_consistent_strong = baseline_acpl <= 18.0 and 12.0 <= baseline_std <= 45.0 and baseline_rank >= 0.55
+                collapse_resistance = (
+                    collapse_pressure >= 0.62 and
+                    error_suppression >= 0.35 and
+                    w_severe_rate == 0.0 and
+                    low_loss_count >= max(2, size - 1)
+                )
+                deep_resource_signal = (
+                    transition_rank_gain >= 0.30 or
+                    (safe_continuations >= 2 and rank_gain >= 0.22 and w_rank >= 0.45) or
+                    (has_context and transition_rank_gain >= 0.20 and safe_continuations >= 1)
+                )
                 structural_abnormality = (
                     size >= 5 and
                     similar_count <= 1 and
                     transition_gain >= 35.0 and
+                    collapse_resistance and
                     (w_std <= 6.0 or hard_count == size) and
-                    (
-                        transition_rank_gain >= 0.28 or
-                        (safe_continuations >= 2 and rank_gain >= 0.20 and w_rank >= 0.45)
-                    )
+                    deep_resource_signal
                 )
 
                 # Stabilization, safe play, and evaluation preservation are ordinary human
-                # crisis behaviors.  They only become meaningful as weak context around a
-                # structurally abnormal switch in decision quality.
+                # crisis behaviors.  They are only small context after a collapse-pressure
+                # structural gate is satisfied; otherwise they are effectively neutral.
                 stabilization_context = (
                     (error_component + severe_component + preservation_component +
                      safe_component + acpl_component + improvement_component +
-                     consistency_component) * 0.18
+                     consistency_component) * 0.10
                 )
-                structure_core = transition_component + transition_rank_component + rarity_component + island_component + context_component
+                collapse_component = clamp_map(collapse_pressure, 0.62, 0.95, 0.0, 14.0) if structural_abnormality else 0.0
+                structure_core = transition_component + transition_rank_component + rarity_component + island_component + context_component + collapse_component
                 if structural_abnormality:
                     raw_score = structure_core + stabilization_context
                 else:
-                    raw_score = min(24.0, (structure_core * 0.25) + stabilization_context)
+                    raw_score = min(18.0, structure_core * 0.15)
 
                 length_weight = {3: 0.22, 4: 0.40, 5: 0.86, 6: 1.00}[size]
                 raw_score *= length_weight
@@ -1156,7 +1173,7 @@ def calculate_tactical_burst(moves: List[HistoryEntry]) -> Tuple[float, List[Tac
 
                 transition_score = min(100.0, max(0.0, transition_component + error_component + severe_component + preservation_component + consistency_component + island_component))
                 reasons = []
-                if structural_abnormality: reasons.append("비정상적 의사결정 전환 구조")
+                if structural_abnormality: reasons.append(f"고붕괴압 저항 구조({collapse_pressure*100:.0f}%)")
                 if w_acpl <= 35.0 and error_suppression >= 0.25: reasons.append(f"위험구간 손실 억제(ACPL {w_acpl:.1f})")
                 elif w_acpl <= 4.0: reasons.append(f"단기 ACPL {w_acpl:.1f}")
                 if error_suppression >= 0.25: reasons.append(f"예상 실수율 {error_suppression*100:.0f}%p 감소")
