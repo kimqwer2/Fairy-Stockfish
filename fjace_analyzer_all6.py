@@ -1068,7 +1068,7 @@ def calculate_tactical_burst(moves: List[HistoryEntry]) -> Tuple[float, List[Tac
                     (prev_gain >= 18.0 and next_gain >= 12.0 and (transition_rank_gain >= 0.15 or error_suppression >= 0.30))
                     or (prev_gain >= 28.0 and has_context)
                     or (safe_mode and prev_gain >= 16.0)
-                    or (stability_mode and next_gain >= 8.0)
+                    or (stability_mode and next_gain >= 8.0 and transition_rank_gain >= 0.20)
                 )
 
                 # Consultation users often preserve stability instead of finding Top-1.
@@ -1088,27 +1088,45 @@ def calculate_tactical_burst(moves: List[HistoryEntry]) -> Tuple[float, List[Tac
                 rarity_component = 8.0 if similar_count == 1 and (relative_gain >= 22.0 or error_suppression >= 0.30) else (4.0 if similar_count == 2 and transition_gain >= 24.0 else 0.0)
                 island_component = (12.0 if is_precision_island and size >= 5 else (7.0 if is_precision_island else 0.0))
 
-                raw_score = (
-                    acpl_component + improvement_component + transition_component +
-                    error_component + severe_component + preservation_component +
-                    rank_component + transition_rank_component + consistency_component +
-                    safe_component + context_component + rarity_component + island_component
+                globally_consistent_strong = baseline_acpl <= 18.0 and 12.0 <= baseline_std <= 45.0 and baseline_rank >= 0.55
+                structural_abnormality = (
+                    size >= 5 and
+                    similar_count <= 1 and
+                    transition_gain >= 35.0 and
+                    (w_std <= 6.0 or hard_count == size) and
+                    (
+                        transition_rank_gain >= 0.28 or
+                        (safe_continuations >= 2 and rank_gain >= 0.20 and w_rank >= 0.45)
+                    )
                 )
 
-                length_weight = {3: 0.30, 4: 0.55, 5: 0.88, 6: 1.08}[size]
+                # Stabilization, safe play, and evaluation preservation are ordinary human
+                # crisis behaviors.  They only become meaningful as weak context around a
+                # structurally abnormal switch in decision quality.
+                stabilization_context = (
+                    (error_component + severe_component + preservation_component +
+                     safe_component + acpl_component + improvement_component +
+                     consistency_component) * 0.18
+                )
+                structure_core = transition_component + transition_rank_component + rarity_component + island_component + context_component
+                if structural_abnormality:
+                    raw_score = structure_core + stabilization_context
+                else:
+                    raw_score = min(24.0, (structure_core * 0.25) + stabilization_context)
+
+                length_weight = {3: 0.22, 4: 0.40, 5: 0.86, 6: 1.00}[size]
                 raw_score *= length_weight
 
-                globally_consistent_strong = baseline_acpl <= 18.0 and 12.0 <= baseline_std <= 45.0 and baseline_rank >= 0.55
-                if globally_consistent_strong and not is_precision_island and similar_count >= 2:
-                    raw_score *= 0.30 if size <= 4 else 0.50
+                if globally_consistent_strong and not structural_abnormality:
+                    raw_score *= 0.20 if size <= 4 else 0.35
                 elif globally_consistent_strong:
-                    raw_score *= 0.65 if size <= 4 else 0.85
-                elif baseline_acpl <= 24.0 and baseline_rank >= 0.60 and not is_precision_island:
-                    raw_score *= 0.65 if size <= 4 else 0.80
-                if baseline_rank >= 0.72 and not is_precision_island:
-                    raw_score *= 0.70
-                if similar_count >= 3 and not is_precision_island:
-                    raw_score *= 0.65
+                    raw_score *= 0.60 if size <= 4 else 0.75
+                elif baseline_acpl <= 24.0 and baseline_rank >= 0.60 and not structural_abnormality:
+                    raw_score *= 0.45 if size <= 4 else 0.65
+                if baseline_rank >= 0.72 and not structural_abnormality:
+                    raw_score *= 0.60
+                if similar_count >= 2 and not structural_abnormality:
+                    raw_score *= 0.55
                 if relative_gain < 15.0 and transition_gain < 18.0 and error_suppression < 0.25:
                     raw_score *= 0.40
                 if rank_gain < 0.12 and transition_rank_gain < 0.14 and error_suppression < 0.30 and not has_context:
@@ -1120,17 +1138,17 @@ def calculate_tactical_burst(moves: List[HistoryEntry]) -> Tuple[float, List[Tac
                 if w_std > 12.0 and error_suppression < 0.30:
                     raw_score *= 0.70
 
-                cap = {3: 28.0, 4: 50.0, 5: 76.0, 6: 88.0}[size]
-                if is_precision_island:
-                    cap += {3: 4.0, 4: 8.0, 5: 8.0, 6: 6.0}[size]
-                if has_context and transition_gain >= 25.0:
-                    cap += {3: 4.0, 4: 6.0, 5: 6.0, 6: 4.0}[size]
-                if safe_mode or stability_mode:
-                    cap = max(cap, 46.0 if size <= 4 else 66.0)
-                if transition_gain < 18.0 and error_suppression < 0.30:
-                    cap = min(cap, 34.0 if size <= 4 else 52.0)
-                if transition_rank_gain < 0.14 and not safe_mode and error_suppression < 0.30:
-                    cap = min(cap, 34.0 if size <= 4 else 56.0)
+                cap = {3: 18.0, 4: 28.0, 5: 58.0, 6: 68.0}[size]
+                if structural_abnormality:
+                    cap = {3: 24.0, 4: 38.0, 5: 76.0, 6: 84.0}[size]
+                    if has_context and transition_gain >= 35.0:
+                        cap += {3: 0.0, 4: 4.0, 5: 6.0, 6: 4.0}[size]
+                if not structural_abnormality and (safe_mode or stability_mode):
+                    cap = min(cap, 30.0 if size <= 4 else 42.0)
+                if transition_gain < 25.0 and error_suppression < 0.45:
+                    cap = min(cap, 24.0 if size <= 4 else 38.0)
+                if transition_rank_gain < 0.20 and not (error_suppression >= 0.45 and size >= 5):
+                    cap = min(cap, 24.0 if size <= 4 else 42.0)
 
                 score = min(cap, max(0.0, raw_score))
                 if score < 35.0:
@@ -1138,6 +1156,7 @@ def calculate_tactical_burst(moves: List[HistoryEntry]) -> Tuple[float, List[Tac
 
                 transition_score = min(100.0, max(0.0, transition_component + error_component + severe_component + preservation_component + consistency_component + island_component))
                 reasons = []
+                if structural_abnormality: reasons.append("비정상적 의사결정 전환 구조")
                 if w_acpl <= 35.0 and error_suppression >= 0.25: reasons.append(f"위험구간 손실 억제(ACPL {w_acpl:.1f})")
                 elif w_acpl <= 4.0: reasons.append(f"단기 ACPL {w_acpl:.1f}")
                 if error_suppression >= 0.25: reasons.append(f"예상 실수율 {error_suppression*100:.0f}%p 감소")
@@ -1170,7 +1189,7 @@ def calculate_tactical_burst(moves: List[HistoryEntry]) -> Tuple[float, List[Tac
                     recovery_count=recovery_count,
                     transition_score=transition_score,
                     safe_continuations=safe_continuations,
-                    island_count=1 if is_precision_island else 0,
+                    island_count=1 if structural_abnormality else 0,
                     commentary=", ".join(reasons)
                 ))
 
@@ -1189,11 +1208,12 @@ def calculate_tactical_burst(moves: List[HistoryEntry]) -> Tuple[float, List[Tac
     if not filtered:
         return 0.0, [], "단기 전술 버스트 특이점 없음"
 
-    if len(filtered) >= 2:
-        reinforcement = min(10.0, 4.0 * (len(filtered) - 1) + sum(1 for b in filtered if b.island_count) * 2.0)
-        filtered[0].score = min(88.0, filtered[0].score + reinforcement)
-        filtered[0].island_count = sum(b.island_count for b in filtered)
-        filtered[0].commentary += f", 반복 정밀 구간 {len(filtered)}개"
+    structural_count = sum(b.island_count for b in filtered)
+    if structural_count >= 2:
+        reinforcement = min(8.0, 3.0 * (structural_count - 1))
+        filtered[0].score = min(82.0, filtered[0].score + reinforcement)
+        filtered[0].island_count = structural_count
+        filtered[0].commentary += f", 반복 구조이상 구간 {structural_count}개"
 
     best = filtered[0]
     if best.score >= 70.0:
@@ -1406,14 +1426,6 @@ def calculate_cheat_probability(moves) -> Tuple[float, float, str]:
         # Tactical bursts are supporting evidence only; they cannot create a high
         # partial verdict when the rest of the game is statistically ordinary.
         partial_prob = max(partial_prob, min(75.0, global_support + min(10.0, (tactical_prob - 70.0) / 2.0)))
-    elif tactical_prob >= 75.0 and tactical_bursts:
-        tb = tactical_bursts[0]
-        if tb.move_count >= 5 or tb.island_count or tb.safe_continuations >= 2:
-            partial_prob = max(partial_prob, min(62.0, tactical_prob * 0.70))
-    elif tactical_prob >= 55.0 and tactical_bursts:
-        tb = tactical_bursts[0]
-        if tb.safe_continuations >= 2 and tb.island_count:
-            partial_prob = max(partial_prob, min(55.0, tactical_prob * 0.80))
 
     final_verdict = ""
     if centaur_prob >= 65.0 and centaur_prob >= full_prob:
@@ -1457,7 +1469,7 @@ def print_tactical_burst_details(rows: List[Tuple[str, float, List[TacticalBurst
     for name, score, bursts, verdict in rows:
         if bursts:
             best = bursts[0]
-            detail = f"{verdict} ({best.move_count}수, ACPL {best.acpl:.1f}, 순위가중 {best.rank_match:.0f}%, 전환 {best.transition_score:.0f}, 안전후보 {best.safe_continuations})"
+            detail = f"{verdict} ({best.move_count}수, ACPL {best.acpl:.1f}, 순위가중 {best.rank_match:.0f}%, 구조전환 {best.transition_score:.0f}, 안전후보 {best.safe_continuations})"
         else:
             detail = verdict
         print(f" {pad_korean(name, 12)} | {pad_korean(format_tactical_burst_cell(score, bursts), 22)} | {detail}")
