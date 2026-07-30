@@ -104,6 +104,42 @@ namespace {
     Move best = MOVE_NONE;
   };
 
+  Move pick_teasing_bm_move(const RootMoves& rootMoves, int gamePly, bool enableMode) {
+
+    constexpr Value TeasingTriggerScore = Value(600);
+    constexpr Value TeasingSafeScore    = Value(400);
+    constexpr int   TeasingMaxGamePly   = 300; // 150 full moves
+
+    if (!enableMode || rootMoves.size() < 2)
+        return MOVE_NONE;
+
+    const RootMove& best = rootMoves[0];
+    if (best.pv.empty() || best.pv[0] == MOVE_NONE || best.score <= TeasingTriggerScore)
+        return MOVE_NONE;
+
+    const bool avoidForcedMate = best.score >= VALUE_MATE_IN_MAX_PLY && gamePly < TeasingMaxGamePly;
+    size_t maxCandidate = std::min(rootMoves.size(), size_t(3));
+
+    // Prefer 2nd/3rd PV while staying safely winning.
+    for (size_t i = 1; i < maxCandidate; ++i)
+    {
+        const RootMove& candidate = rootMoves[i];
+
+        if (candidate.pv.empty() || candidate.pv[0] == MOVE_NONE)
+            continue;
+
+        if (candidate.score <= TeasingSafeScore)
+            continue;
+
+        if (avoidForcedMate && candidate.score >= VALUE_MATE_IN_MAX_PLY)
+            continue;
+
+        return candidate.pv[0];
+    }
+
+    return MOVE_NONE;
+  }
+
   template <NodeType nodeType>
   Value search(Position& pos, Stack* ss, Value alpha, Value beta, Depth depth, bool cutNode);
 
@@ -256,6 +292,12 @@ void MainThread::search() {
       bestThread = Threads.get_best_thread();
 
   bestPreviousScore = bestThread->rootMoves[0].score;
+
+  if (Move teasingMove = pick_teasing_bm_move(bestThread->rootMoves,
+                                              bestThread->rootPos.game_ply(),
+                                              std::string(Options["UCI_Variant"]) == "janggimodern");
+      teasingMove != MOVE_NONE)
+      std::swap(bestThread->rootMoves[0], *std::find(bestThread->rootMoves.begin(), bestThread->rootMoves.end(), teasingMove));
 
   // Send again PV info if we have a new best thread
   if (bestThread != this)
