@@ -66,6 +66,10 @@ namespace {
   constexpr uint64_t TtHitAverageWindow     = 4096;
   constexpr uint64_t TtHitAverageResolution = 1024;
 
+  bool pawn_like(PieceType pt) {
+    return pt == PAWN || pt == SOLDIER || pt == SHOGI_PAWN;
+  }
+
   // Futility margin
   Value futility_margin(Depth d, bool improving) {
     return Value(214 * (d - improving));
@@ -1897,8 +1901,11 @@ moves_loop: // When in check, search starts from here
         thisThread->gateHistory[us][gating_square(move)] << bonus;
     update_continuation_histories(ss, pos.moved_piece(move), to_sq(move), bonus);
 
-    // Penalty for reversed move in case of moved piece not being a pawn
-    if (type_of(pos.moved_piece(move)) != PAWN && type_of(move) != DROP)
+    // Penalty for reversed moves is intended for piece shuffling. Do not apply it
+    // to pawn-like pieces: in variants such as Janggi, soldiers can legally move
+    // sideways after crossing the river, and reversing a soldier move is often a
+    // normal tempo/resource-preserving move rather than aimless shuffling.
+    if (!pawn_like(type_of(pos.moved_piece(move))) && type_of(move) != DROP)
         thisThread->mainHistory[us][from_to(reverse_move(move))] << -bonus;
 
     // Update countermove history

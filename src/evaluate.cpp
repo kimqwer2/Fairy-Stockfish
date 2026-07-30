@@ -1616,8 +1616,14 @@ Value Eval::evaluate(const Position& pos) {
       // Scale and shift NNUE for compatibility with search and classical evaluation
       auto  adjusted_NNUE = [&]()
       {
+         // Scale NNUE by the number of low-value advancing pieces. Chess pawns
+         // are not the only pawn-like piece type in variants: Janggi uses
+         // SOLDIER, and shogi-family variants can use SHOGI_PAWN. Treating
+         // those as zero pawns under-scales the variant NNUE in soldier-heavy
+         // positions and makes the search lean too much on material.
+         int pawnLikeCount = pos.count<PAWN>() + pos.count<SOLDIER>() + pos.count<SHOGI_PAWN>();
          int scale =   903
-                     + 32 * pos.count<PAWN>()
+                     + 32 * pawnLikeCount
                      + 32 * pos.non_pawn_material() / 1024;
 
          Value nnue = NNUE::evaluate(pos, true) * scale / 1024;
