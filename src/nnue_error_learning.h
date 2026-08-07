@@ -14,7 +14,7 @@ void init();
 void on_options_changed();
 void save();
 void collect(const Position& pos, Value staticEval, Value searchEval, const std::string& result = "");
-Value correction(const Position& pos);
+Value correction(const Position& pos, Value uncorrectedEval);
 bool active_for(const Position& pos);
 
 }

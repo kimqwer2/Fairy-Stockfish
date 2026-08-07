@@ -261,7 +261,7 @@ void MainThread::search() {
   if (bestThread->rootMoves[0].pv[0] != MOVE_NONE)
   {
       Value correctedStatic = Eval::evaluate(rootPos);
-      Value appliedCorrection = NnueErrorLearning::correction(rootPos);
+      Value appliedCorrection = NnueErrorLearning::correction(rootPos, correctedStatic);
       NnueErrorLearning::collect(rootPos, Value(correctedStatic - appliedCorrection), bestPreviousScore);
   }
 

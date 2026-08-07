@@ -1648,7 +1648,7 @@ Value Eval::evaluate(const Position& pos) {
   }
 
   if (NnueErrorLearning::active_for(pos))
-      v += NnueErrorLearning::correction(pos);
+      v += NnueErrorLearning::correction(pos, v);
 
   // Damp down the evaluation linearly when shuffling
   if (pos.n_move_rule())
