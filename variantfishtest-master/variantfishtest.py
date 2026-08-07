@@ -71,6 +71,10 @@ class EngineMatch:
         self.parser.add_argument("--scheduler", help="pairing scheduler for tournaments", 
                                  choices=["roundrobin", "random", "copeland_ucb", "borda_ucb"], 
                                  default="random")
+        self.parser.add_argument("--nnue-error-dir", help="directory for persistent JanggiModern NNUE error/correction files", type=str, default="")
+        self.parser.add_argument("--collect-nnue-errors", help="enable NNUE error dataset collection for JanggiModern engines", action="store_true")
+        self.parser.add_argument("--enable-janggi-correction", help="enable runtime JanggiModern correction loading/updating", action="store_true")
+        self.parser.add_argument("--correction-learning-rate", help="Janggi correction learning percentage passed to engines", type=int, default=0)
         # Engine aliases for clearer tournament output
         self.parser.add_argument("--alias", help="alias for an engine (format: engine_index:alias). Repeatable.",
                                  type=lambda kv: kv.split(":", 1), action='append', default=[])
@@ -305,6 +309,9 @@ class EngineMatch:
         self.out.write("increment:  %d\n" % self.inc)
         self.out.write("book:       %s\n" % self.book)
         self.out.write("threads:    %d\n" % self.threads)
+        self.out.write("nnue-error-dir: %s\n" % self.nnue_error_dir)
+        self.out.write("collect-nnue-errors: %s\n" % self.collect_nnue_errors)
+        self.out.write("enable-janggi-correction: %s\n" % self.enable_janggi_correction)
         self.out.write("------------------------\n")
         self.out.flush()
 
@@ -976,6 +983,7 @@ class EngineMatch:
             if self.config:
                 engine.setoption({"VariantPath": self.config})
             engine.setoption({"UCI_Variant": variant})
+            engine.setoption(self._nnue_learning_options(idx, variant))
             engine.setoption(opts)
             engines.append(engine)
 
@@ -1006,6 +1014,7 @@ class EngineMatch:
         for engine in engines:
             engine.ucinewgame()
             engine.setoption({"clear hash": True, "UCI_Variant": variant})
+            engine.setoption(self._nnue_learning_options(engine_indices[engines.index(engine)], variant))
 
         # Some variants may require a positional offset.
         offset = 0
@@ -1080,6 +1089,27 @@ class EngineMatch:
                 self.out.write(
                     "Game (%s):\n" % (variant,) + pos + "\n" + " ".join(bestmoves) + "\n")
         return result, tl, bestmoves
+
+    def _nnue_learning_options(self, idx, variant):
+        """Return persistent NNUE learning options for JanggiModern self-play.
+
+        Files are stable per engine index so worker or GUI restarts keep using the same
+        correction and append-only dataset paths. Explicit --engine-options still run
+        afterwards and can override any value.
+        """
+        if variant != "janggimodern" or not (self.nnue_error_dir or self.collect_nnue_errors or self.enable_janggi_correction):
+            return {}
+
+        base = os.path.abspath(self.nnue_error_dir or ".")
+        os.makedirs(base, exist_ok=True)
+        label = self._engine_label(idx).replace(os.sep, "_").replace(" ", "_")
+        return {
+            "NNUE Error Collection": self.collect_nnue_errors,
+            "NNUE Error Dataset File": os.path.join(base, "%s_nnue_error_dataset.bin" % label),
+            "Janggi Correction Enable": self.enable_janggi_correction,
+            "Janggi Correction File": os.path.join(base, "%s_janggi_correction.bin" % label),
+            "Janggi Correction Learning Rate": self.correction_learning_rate,
+        }
 
     def _engine_label(self, idx):
         """Return display label for engine index respecting aliases.
