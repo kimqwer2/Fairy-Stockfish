@@ -201,6 +201,10 @@ void init(OptionsMap& o) {
   o["Syzygy50MoveRule"]      << Option(true);
   o["SyzygyProbeLimit"]      << Option(7, 0, 7);
   o["Use NNUE"]              << Option(true, on_use_NNUE);
+  o["JanggiModern Endgame Correction"] << Option(true);
+  o["JanggiModern Correction Max Pieces"] << Option(10, 2, 64);
+  o["JanggiModern Correction Near Zero"] << Option(10, 0, 100);
+  o["JanggiModern Correction Bonus"] << Option(20, 0, 100);
 #ifndef NNUE_EMBEDDING_OFF
   o["EvalFile"]              << Option(EvalFileDefaultName, on_eval_file);
 #else

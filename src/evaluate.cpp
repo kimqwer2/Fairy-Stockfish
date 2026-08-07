@@ -1599,6 +1599,30 @@ make_v:
                                        : -Value(correction);
   }
 
+
+  // JanggiModern has no chess-like draw adjudication in material-counting endings:
+  // a half-point counting advantage already determines the winner. Some NNUE
+  // endgame positions are nevertheless scored very close to equality, so keep
+  // the network untouched and apply a small, configurable post-NNUE nudge only
+  // in sparse, near-equal JanggiModern positions where the official material
+  // counting rule already identifies a winning side.
+  Value janggi_modern_endgame_correction(const Position& pos, Value nnue) {
+
+    if (   !bool(Options["JanggiModern Endgame Correction"])
+        || std::string(Options["UCI_Variant"]) != "janggimodern"
+        || pos.count<ALL_PIECES>() > int(Options["JanggiModern Correction Max Pieces"])
+        || std::abs(nnue) >= Value(int(Options["JanggiModern Correction Near Zero"]) * PawnValueEg / 100)
+        || !pos.material_counting())
+        return VALUE_ZERO;
+
+    Value result = pos.material_counting_result();
+    if (result == VALUE_DRAW)
+        return VALUE_ZERO;
+
+    Value bonus = Value(int(Options["JanggiModern Correction Bonus"]) * PawnValueEg / 100);
+    return result > VALUE_ZERO ? bonus : -bonus;
+  }
+
 } // namespace Eval
 
 
@@ -1642,8 +1666,13 @@ Value Eval::evaluate(const Position& pos) {
       bool pure = !pos.check_counting();
       bool classical = psq * 5 > (750 + pos.non_pawn_material() / 64) * (5 + r50) && !pure;
 
-      v = classical ? Evaluation<NO_TRACE>(pos).value()  // classical
-                    : adjusted_NNUE();                   // NNUE
+      if (classical)
+          v = Evaluation<NO_TRACE>(pos).value();
+      else
+      {
+          v = adjusted_NNUE();
+          v += janggi_modern_endgame_correction(pos, v);
+      }
   }
 
   // Damp down the evaluation linearly when shuffling
