@@ -23,6 +23,7 @@
 #include <sstream>
 #include <string>
 
+#include "custom_book.h"
 #include "evaluate.h"
 #include "movegen.h"
 #include "position.h"
@@ -301,6 +302,7 @@ void UCI::loop(int argc, char* argv[]) {
 
   assert(variants.find(Options["UCI_Variant"])->second != nullptr);
   pos.set(variants.find(Options["UCI_Variant"])->second, variants.find(Options["UCI_Variant"])->second->startFen, false, &states->back(), Threads.main());
+  load_custom_book();
 
   for (int i = 1; i < argc; ++i)
       cmd += std::string(argv[i]) + " ";
