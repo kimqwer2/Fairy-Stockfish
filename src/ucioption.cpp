@@ -201,6 +201,13 @@ void init(OptionsMap& o) {
   o["Syzygy50MoveRule"]      << Option(true);
   o["SyzygyProbeLimit"]      << Option(7, 0, 7);
   o["Use NNUE"]              << Option(true, on_use_NNUE);
+  o["NNUE Error Collection"] << Option(false);
+  o["NNUE Error Dataset File"] << Option("nnue_error_dataset.bin");
+  o["Janggi Correction Enable"] << Option(false);
+  o["Janggi Correction File"] << Option("janggi_correction.bin");
+  o["Janggi Correction Save"] << Option(false);
+  o["Janggi Correction Learning Rate"] << Option(0, 0, 100);
+  o["Janggi Correction Maximum Value"] << Option(300, 0, 2000);
 #ifndef NNUE_EMBEDDING_OFF
   o["EvalFile"]              << Option(EvalFileDefaultName, on_eval_file);
 #else

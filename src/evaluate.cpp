@@ -31,6 +31,7 @@
 #include "evaluate.h"
 #include "material.h"
 #include "misc.h"
+#include "nnue_error_learning.h"
 #include "pawns.h"
 #include "thread.h"
 #include "timeman.h"
@@ -1645,6 +1646,9 @@ Value Eval::evaluate(const Position& pos) {
       v = classical ? Evaluation<NO_TRACE>(pos).value()  // classical
                     : adjusted_NNUE();                   // NNUE
   }
+
+  if (NnueErrorLearning::active_for(pos))
+      v += NnueErrorLearning::correction(pos, v);
 
   // Damp down the evaluation linearly when shuffling
   if (pos.n_move_rule())

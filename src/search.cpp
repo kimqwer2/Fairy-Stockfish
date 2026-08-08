@@ -27,6 +27,7 @@
 #include "misc.h"
 #include "movegen.h"
 #include "movepick.h"
+#include "nnue_error_learning.h"
 #include "partner.h"
 #include "position.h"
 #include "search.h"
@@ -256,6 +257,13 @@ void MainThread::search() {
       bestThread = Threads.get_best_thread();
 
   bestPreviousScore = bestThread->rootMoves[0].score;
+
+  if (bestThread->rootMoves[0].pv[0] != MOVE_NONE)
+  {
+      Value correctedStatic = Eval::evaluate(rootPos);
+      Value appliedCorrection = NnueErrorLearning::correction(rootPos, correctedStatic);
+      NnueErrorLearning::collect(rootPos, Value(correctedStatic - appliedCorrection), bestPreviousScore);
+  }
 
   // Send again PV info if we have a new best thread
   if (bestThread != this)

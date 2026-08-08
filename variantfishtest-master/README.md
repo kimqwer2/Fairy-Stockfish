@@ -107,3 +107,23 @@ The UCB schedulers are designed to:
 - Soft-exclude weak engines (selected rarely, never completely dropped)
 - Focus games on decisive matches that reduce ranking uncertainty
 - Work seamlessly with multithreading using virtual visits
+
+## JanggiModern NNUE Error Learning
+
+`variantfishtest.py` can preserve persistent Fairy-Stockfish JanggiModern NNUE error-learning files while running self-play. The integration is opt-in and does not change existing tests unless one of these flags is supplied:
+
+```bash
+python variantfishtest.py ./stockfish ./stockfish \
+  -v janggimodern -n 1000 -t 1000 -i 10 \
+  --nnue-error-dir ./janggi-learning \
+  --collect-nnue-errors \
+  --enable-janggi-correction \
+  --correction-learning-rate 10
+```
+
+The runner assigns stable per-engine files in `--nnue-error-dir`:
+
+- `<engine-label>_nnue_error_dataset.bin` for append-only error samples usable by future NNUE training converters.
+- `<engine-label>_janggi_correction.bin` for persistent runtime correction patches loaded by later engine processes.
+
+Explicit `--engine-options` / `--e1-options` / `--e2-options` are still applied after these defaults, so tests can override file names or disable collection/correction for individual engines.

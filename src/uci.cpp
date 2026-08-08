@@ -31,6 +31,7 @@
 #include "timeman.h"
 #include "tt.h"
 #include "uci.h"
+#include "nnue_error_learning.h"
 #include "xboard.h"
 #include "syzygy/tbprobe.h"
 
@@ -205,7 +206,7 @@ namespace {
             else
                trace_eval(pos);
         }
-        else if (token == "setoption")  setoption(is);
+        else if (token == "setoption")  { setoption(is); NnueErrorLearning::on_options_changed(); if (Options.count("Janggi Correction Save") && bool(Options["Janggi Correction Save"])) NnueErrorLearning::save(); }
         else if (token == "position")   position(pos, is, states);
         else if (token == "ucinewgame") { Search::clear(); elapsed = now(); } // Search::clear() may take some while
     }
@@ -295,6 +296,8 @@ namespace {
 
 void UCI::loop(int argc, char* argv[]) {
 
+  NnueErrorLearning::init();
+
   Position pos;
   string token, cmd;
   StateListPtr states(new std::deque<StateInfo>(1));
@@ -373,7 +376,7 @@ void UCI::loop(int argc, char* argv[]) {
       else if (CurrentProtocol == XBOARD)
           XBoard::stateMachine->process_command(token, is);
 
-      else if (token == "setoption")  setoption(is);
+      else if (token == "setoption")  { setoption(is); NnueErrorLearning::on_options_changed(); if (Options.count("Janggi Correction Save") && bool(Options["Janggi Correction Save"])) NnueErrorLearning::save(); }
       // UCCI-specific banmoves command
       else if (token == "banmoves")
           while (is >> token)
@@ -390,6 +393,7 @@ void UCI::loop(int argc, char* argv[]) {
       else if (token == "d")        sync_cout << pos << sync_endl;
       else if (token == "eval")     trace_eval(pos);
       else if (token == "compiler") sync_cout << compiler_info() << sync_endl;
+      else if (token == "save_janggi_correction") NnueErrorLearning::save();
       else if (token == "export_net")
       {
           std::optional<std::string> filename;
@@ -417,6 +421,8 @@ void UCI::loop(int argc, char* argv[]) {
           sync_cout << "Unknown command: " << cmd << sync_endl;
 
   } while (token != "quit" && argc == 1); // Command line args are one-shot
+
+  NnueErrorLearning::save();
 }
 
 
