@@ -21,6 +21,7 @@
 
 #include "evaluate.h"
 #include "misc.h"
+#include "nnue_error_learning.h"
 #include "partner.h"
 #include "search.h"
 #include "thread.h"
@@ -225,6 +226,7 @@ void StateMachine::process_command(std::string token, std::istringstream& is) {
   else if (token == "new")
   {
       stop();
+      NnueErrorLearning::save();
       Search::clear();
       setboard();
       // play second by default
@@ -237,11 +239,13 @@ void StateMachine::process_command(std::string token, std::istringstream& is) {
       stop();
       if (is >> token)
           Options["UCI_Variant"] = token;
+      NnueErrorLearning::on_options_changed();
       setboard();
   }
   else if (token == "force" || token == "result")
   {
       stop();
+      NnueErrorLearning::save();
       playColor = COLOR_NB;
   }
   else if (token == "?")
@@ -357,6 +361,9 @@ void StateMachine::process_command(std::string token, std::istringstream& is) {
           if (Options[name].get_type() == "check")
               value = value == "1" ? "true" : "false";
           Options[name] = value;
+          NnueErrorLearning::on_options_changed();
+          if (Options.count("Janggi Correction Save") && bool(Options["Janggi Correction Save"]))
+              NnueErrorLearning::save();
       }
   }
   else if (token == "analyze")
@@ -448,6 +455,8 @@ void StateMachine::process_command(std::string token, std::istringstream& is) {
       sync_cout << pos << sync_endl;
   else if (token == "eval")
       sync_cout << Eval::trace(pos) << sync_endl;
+  else if (token == "janggi_correction_status")
+      sync_cout << NnueErrorLearning::status() << sync_endl;
   // Move strings and unknown commands
   else
   {
