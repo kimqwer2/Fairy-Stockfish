@@ -478,6 +478,9 @@ extern Value PieceValue[PHASE_NB][PIECE_NB];
 extern Value EvalPieceValue[PHASE_NB][PIECE_NB]; // variant piece values for evaluation
 extern Value CapturePieceValue[PHASE_NB][PIECE_NB]; // variant piece values for captures/search
 
+void set_janggi_piece_value(Phase ph, PieceType pt, Value value);
+void reset_janggi_piece_values();
+
 typedef int Depth;
 
 enum : int {
