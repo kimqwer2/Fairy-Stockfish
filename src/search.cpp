@@ -942,10 +942,12 @@ namespace {
 
     // Step 8. Null move search with verification search (~40 Elo)
     if (   !PvNode
+        &&  depth >= 3
         && (ss-1)->currentMove != MOVE_NULL
         && (ss-1)->statScore < 23767
         &&  eval >= beta
         &&  eval >= ss->staticEval
+        &&  ss->staticEval >= beta - 50
         &&  ss->staticEval >= beta - 20 * depth - 22 * improving + 168 * ss->ttPv + 159 + 200 * (!pos.double_step_region(pos.side_to_move()) && (pos.piece_types() & PAWN))
         && !excludedMove
         &&  pos.non_pawn_material(us)
@@ -956,7 +958,7 @@ namespace {
         assert(eval - beta >= 0);
 
         // Null move dynamic reduction based on depth and value
-        Depth R = (1090 - 300 * pos.must_capture() - 250 * !pos.checking_permitted() + 81 * depth) / 256 + std::min(int(eval - beta) / 205, pos.must_capture() || pos.blast_on_capture() ? 0 : 3);
+        Depth R = 2 + depth / 8;
 
         ss->currentMove = MOVE_NULL;
         ss->continuationHistory = &thisThread->continuationHistory[0][0][NO_PIECE][0];
@@ -1330,6 +1332,13 @@ moves_loop: // When in check, search starts from here
 
           if (!captureOrPromotion)
           {
+              // Shape quiet-move LMR: preserve tactical stability for earlier moves,
+              // but trim deeper late-move tails more aggressively.
+              if (moveCount <= 6)
+                  r--;
+              else if (moveCount >= 14)
+                  r++;
+
               // Increase reduction if ttMove is a capture (~3 Elo)
               if (ttCapture)
                   r++;
