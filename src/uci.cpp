@@ -208,7 +208,7 @@ namespace {
         }
         else if (token == "setoption")  { setoption(is); NnueErrorLearning::on_options_changed(); if (Options.count("Janggi Correction Save") && bool(Options["Janggi Correction Save"])) NnueErrorLearning::save(); }
         else if (token == "position")   position(pos, is, states);
-        else if (token == "ucinewgame") { Search::clear(); elapsed = now(); } // Search::clear() may take some while
+        else if (token == "ucinewgame") { NnueErrorLearning::save(); Search::clear(); elapsed = now(); } // Search::clear() may take some while
     }
 
     elapsed = now() - elapsed + 1; // Ensure positivity to avoid a 'divide by zero'
@@ -383,7 +383,7 @@ void UCI::loop(int argc, char* argv[]) {
               banmoves.push_back(UCI::to_move(pos, token));
       else if (token == "go")         go(pos, is, states, banmoves);
       else if (token == "position")   position(pos, is, states), banmoves.clear();
-      else if (token == "ucinewgame" || token == "usinewgame" || token == "uccinewgame") Search::clear();
+      else if (token == "ucinewgame" || token == "usinewgame" || token == "uccinewgame") { NnueErrorLearning::save(); Search::clear(); }
       else if (token == "isready")    sync_cout << "readyok" << sync_endl;
 
       // Additional custom non-UCI commands, mainly for debugging.
@@ -394,6 +394,7 @@ void UCI::loop(int argc, char* argv[]) {
       else if (token == "eval")     trace_eval(pos);
       else if (token == "compiler") sync_cout << compiler_info() << sync_endl;
       else if (token == "save_janggi_correction") NnueErrorLearning::save();
+      else if (token == "janggi_correction_status") sync_cout << NnueErrorLearning::status() << sync_endl;
       else if (token == "export_net")
       {
           std::optional<std::string> filename;

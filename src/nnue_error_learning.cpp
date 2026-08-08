@@ -1,10 +1,12 @@
 #include "nnue_error_learning.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <sstream>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -22,7 +24,8 @@ constexpr uint16_t FormatVersion   = 1;
 constexpr int MaterialSlots = COLOR_NB * PIECE_TYPE_NB;
 constexpr int MaxCorrectedPieces = 32;
 constexpr int CorrectionEvalWindow = 1200;
-constexpr size_t DatasetFlushRecords = 4096;
+constexpr size_t DatasetFlushRecords = 64;
+constexpr uint64_t CorrectionSaveSamples = 64;
 
 struct CorrectionEntry {
     Key key = 0;
@@ -70,6 +73,15 @@ bool variantActive = false;
 bool correctionEnabled = false;
 bool collectionEnabled = false;
 bool dirty = false;
+uint64_t loadedEntries = 0;
+uint64_t datasetRecords = 0;
+uint64_t collectedRecords = 0;
+std::atomic<uint64_t> correctionLookups{0};
+std::atomic<uint64_t> correctionHits{0};
+std::atomic<uint64_t> correctionApplied{0};
+uint64_t correctionLearned = 0;
+uint64_t lastSavedLearned = 0;
+std::string loadStatus = "not loaded";
 
 size_t next_power_of_two(size_t n) {
     size_t p = 1;
@@ -135,8 +147,7 @@ bool has_correction_potential(const Position& pos, Value uncorrectedEval) {
         && !corrections.empty()
         && std::abs(int(uncorrectedEval)) <= CorrectionEvalWindow
         && pos.count<ALL_PIECES>() <= MaxCorrectedPieces
-        && pos.material_counting() == JANGGI_MATERIAL
-        && pos.material_counting_result() == VALUE_ZERO;
+        && pos.material_counting() == JANGGI_MATERIAL;
 }
 
 int16_t clamp_i16(Value v) {
@@ -160,19 +171,28 @@ void load_file(const std::string& file) {
     loadedCorrectionFile = file;
     loaded = true;
 
+    loadedEntries = 0;
+    loadStatus = "disabled or empty file";
+
     if (file.empty() || file == "<empty>")
         return;
 
     std::ifstream in(file, std::ios::binary);
     if (!in)
+    {
+        loadStatus = "file not found";
         return;
+    }
 
     Header h{};
     if (!in.read(reinterpret_cast<char*>(&h), sizeof(h))
         || h.magic != CorrectionMagic
         || h.version != FormatVersion
         || h.recordSize != sizeof(CorrectionRecord))
+    {
+        loadStatus = "invalid header";
         return;
+    }
 
     corrections.assign(next_power_of_two(std::max<uint64_t>(1024, h.count * 2)), {});
     for (uint64_t i = 0; i < h.count; ++i)
@@ -181,6 +201,8 @@ void load_file(const std::string& file) {
         if (!in.read(reinterpret_cast<char*>(&r), sizeof(r)))
         {
             corrections.clear();
+            loadedEntries = 0;
+            loadStatus = "truncated file";
             return;
         }
         if (r.count)
@@ -188,8 +210,10 @@ void load_file(const std::string& file) {
             CorrectionEntry& e = find_or_insert(Key(r.key));
             e.sum = r.sum;
             e.count = r.count;
+            loadedEntries++;
         }
     }
+    loadStatus = "loaded";
 }
 
 void flush_dataset() {
@@ -208,7 +232,40 @@ void flush_dataset() {
     }
 
     out.write(reinterpret_cast<const char*>(datasetBuffer.data()), std::streamsize(datasetBuffer.size() * sizeof(DatasetRecord)));
-    datasetBuffer.clear();
+    if (out)
+    {
+        datasetRecords += datasetBuffer.size();
+        datasetBuffer.clear();
+    }
+}
+
+bool save_correction_file() {
+    std::string file = Options.count("Janggi Correction File") ? std::string(Options["Janggi Correction File"]) : loadedCorrectionFile;
+    if (file.empty() || file == "<empty>" || corrections.empty() || !dirty)
+        return false;
+
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    if (!out)
+        return false;
+
+    uint64_t used = 0;
+    for (const CorrectionEntry& e : corrections)
+        used += e.count != 0;
+
+    Header h{CorrectionMagic, FormatVersion, uint16_t(sizeof(CorrectionRecord)), used};
+    out.write(reinterpret_cast<const char*>(&h), sizeof(h));
+    for (const CorrectionEntry& e : corrections)
+        if (e.count)
+        {
+            CorrectionRecord r{uint64_t(e.key), e.sum, e.count};
+            out.write(reinterpret_cast<const char*>(&r), sizeof(r));
+        }
+
+    if (!out)
+        return false;
+
+    dirty = false;
+    return true;
 }
 
 } // namespace
@@ -230,47 +287,40 @@ void on_options_changed() {
     datasetFile = Options.count("NNUE Error Dataset File") ? std::string(Options["NNUE Error Dataset File"]) : "";
 
     std::string file = Options.count("Janggi Correction File") ? std::string(Options["Janggi Correction File"]) : "";
+    if (loaded && file != loadedCorrectionFile)
+    {
+        flush_dataset();
+        save_correction_file();
+    }
     if (!loaded || file != loadedCorrectionFile)
         load_file(file);
+}
+
+void flush() {
+    std::lock_guard<std::mutex> lock(mutex);
+    flush_dataset();
 }
 
 void save() {
     std::lock_guard<std::mutex> lock(mutex);
     flush_dataset();
-
-    std::string file = Options.count("Janggi Correction File") ? std::string(Options["Janggi Correction File"]) : loadedCorrectionFile;
-    if (file.empty() || file == "<empty>" || corrections.empty() || !dirty)
-        return;
-
-    std::ofstream out(file, std::ios::binary | std::ios::trunc);
-    if (!out)
-        return;
-
-    uint64_t used = 0;
-    for (const CorrectionEntry& e : corrections)
-        used += e.count != 0;
-
-    Header h{CorrectionMagic, FormatVersion, uint16_t(sizeof(CorrectionRecord)), used};
-    out.write(reinterpret_cast<const char*>(&h), sizeof(h));
-    for (const CorrectionEntry& e : corrections)
-        if (e.count)
-        {
-            CorrectionRecord r{uint64_t(e.key), e.sum, e.count};
-            out.write(reinterpret_cast<const char*>(&r), sizeof(r));
-        }
-
-    dirty = false;
+    save_correction_file();
 }
 
 Value correction(const Position& pos, Value uncorrectedEval) {
     if (!has_correction_potential(pos, uncorrectedEval))
         return VALUE_ZERO;
 
+    correctionLookups++;
     const CorrectionEntry* e = find_entry(pos.key());
     if (!e)
         return VALUE_ZERO;
 
-    return Value(std::clamp(e->sum / int(e->count), -maxCorrection, maxCorrection));
+    correctionHits++;
+    Value v = Value(std::clamp(e->sum / int(e->count), -maxCorrection, maxCorrection));
+    if (v != VALUE_ZERO)
+        correctionApplied++;
+    return v;
 }
 
 void collect(const Position& pos, Value staticEval, Value searchEval, const std::string& result) {
@@ -298,6 +348,7 @@ void collect(const Position& pos, Value staticEval, Value searchEval, const std:
 
     std::lock_guard<std::mutex> lock(mutex);
     datasetBuffer.push_back(rec);
+    collectedRecords++;
     if (datasetBuffer.size() >= DatasetFlushRecords)
         flush_dataset();
 
@@ -305,10 +356,43 @@ void collect(const Position& pos, Value staticEval, Value searchEval, const std:
     {
         int learned = int(std::round(diff * learningRate / 100.0));
         CorrectionEntry& e = find_or_insert(pos.key());
-        e.sum += learned;
-        e.count += 1;
+        e.sum = std::clamp<int64_t>(int64_t(e.sum) + learned, INT32_MIN, INT32_MAX);
+        if (e.count != UINT32_MAX)
+            e.count += 1;
         dirty = true;
+        correctionLearned++;
+        if (correctionLearned - lastSavedLearned >= CorrectionSaveSamples)
+        {
+            lastSavedLearned = correctionLearned;
+            flush_dataset();
+            save_correction_file();
+        }
     }
+}
+
+std::string status() {
+    std::lock_guard<std::mutex> lock(mutex);
+    uint64_t active = 0;
+    for (const CorrectionEntry& e : corrections)
+        active += e.count != 0;
+
+    std::ostringstream os;
+    os << "Janggi Correction Enabled: " << (correctionEnabled ? "true" : "false") << "\n"
+       << "Janggi Correction Variant Active: " << (variantActive ? "true" : "false") << "\n"
+       << "Janggi Correction File: " << loadedCorrectionFile << "\n"
+       << "Janggi Correction Load Status: " << loadStatus << "\n"
+       << "Janggi Correction Loaded: " << loadedEntries << "\n"
+       << "Janggi Correction Active Entries: " << active << "\n"
+       << "Janggi Correction Lookups: " << correctionLookups.load() << "\n"
+       << "Janggi Correction Hits: " << correctionHits.load() << "\n"
+       << "Janggi Correction Applied: " << correctionApplied.load() << "\n"
+       << "Janggi Correction Learned: " << correctionLearned << "\n"
+       << "NNUE Error Collection Enabled: " << (collectionEnabled ? "true" : "false") << "\n"
+       << "NNUE Error Dataset File: " << datasetFile << "\n"
+       << "NNUE Error Dataset Buffered: " << datasetBuffer.size() << "\n"
+       << "NNUE Error Dataset Flushed: " << datasetRecords << "\n"
+       << "NNUE Error Dataset Collected: " << collectedRecords;
+    return os.str();
 }
 
 } // namespace Stockfish::NnueErrorLearning
