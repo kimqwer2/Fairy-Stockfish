@@ -104,6 +104,10 @@ struct LimitsType {
 
 extern LimitsType Limits;
 
+extern int TuneLMR_Base;
+extern int TuneLMR_Div;
+extern int TuneFutility_Margin;
+
 void init();
 void clear();
 
